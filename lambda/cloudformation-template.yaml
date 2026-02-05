@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: s2r Lambda function for SLURM to Run.ai conversion
+
+Parameters:
+  SharedSecret:
+    Type: String
+    Description: Shared secret for HMAC signature verification
+    NoEcho: true
+    Default: s2r-shared-secret-change-this-in-production
+
+  BedrockModelId:
+    Type: String
+    Description: Bedrock model ID to use
+    Default: anthropic.claude-sonnet-4-5-20250929-v1:0
+
+  MaxRequestsPerIpPerDay:
+    Type: Number
+    Description: Maximum requests per IP per day
+    Default: 100
+
+Resources:
+  # Lambda execution role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: s2r-lambda-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource: arn:aws:dynamodb:us-west-2:405644541454:table/s2r-rate-limits
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}'
+
+  # Reference to existing DynamoDB table
+  # Note: Table already exists, so we just reference its ARN
+
+  # Lambda function
+  S2RFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: s2r-converter
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          SHARED_SECRET: !Ref SharedSecret
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          MAX_REQUESTS_PER_IP_PER_DAY: !Ref MaxRequestsPerIpPerDay
+          RATE_LIMIT_TABLE: s2r-rate-limits
+      Code:
+        ZipFile: |
+          # Placeholder - will be updated via update-function-code
+          def lambda_handler(event, context):
+              return {"statusCode": 500, "body": "Function not yet deployed"}
+
+  # Function URL
+  S2RFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt S2RFunction.Arn
+
+  # Permission for Function URL
+  S2RFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref S2RFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+Outputs:
+  FunctionUrl:
+    Description: Lambda Function URL
+    Value: !GetAtt S2RFunctionUrl.FunctionUrl
+    Export:
+      Name: S2RFunctionUrl
+
+  RateLimitTableName:
+    Description: DynamoDB table for rate limiting
+    Value: s2r-rate-limits
