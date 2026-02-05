@@ -1,28 +1,53 @@
 """Command-line interface for s2r."""
 
+import os
 import sys
 from typing import Optional
 
 from s2r.converter import convert_slurm_to_runai, ConversionError
 
 
-def main() -> None:
-    """Main CLI entry point.
+def print_help() -> None:
+    """Print help message."""
+    print("s2r - Convert SLURM scripts to Run.ai configurations using AI", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Usage:", file=sys.stderr)
+    print("  s2r <input_file> [output_file]    Convert SLURM script file", file=sys.stderr)
+    print("  s2r < script.sh                   Read from stdin (piped input)", file=sys.stderr)
+    print("  cat script.sh | s2r               Read from stdin (piped input)", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Examples:", file=sys.stderr)
+    print("  s2r job.slurm                     Convert and print to stdout", file=sys.stderr)
+    print("  s2r job.slurm output.yaml         Convert and save to file", file=sys.stderr)
+    print("  s2r < job.slurm > output.yaml     Using shell redirection", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Environment variables:", file=sys.stderr)
+    print("  AWS_PROFILE                       AWS profile for authentication", file=sys.stderr)
+    print("  S2R_API_ENDPOINT                  Custom Lambda Function URL", file=sys.stderr)
+    print("  S2R_AWS_REGION                    AWS region (default: us-west-2)", file=sys.stderr)
+    print("  S2R_USE_IAM_AUTH                  Use IAM auth (default: true)", file=sys.stderr)
 
-    Usage:
-        s2r < slurm_script.sh                    # Read from stdin, write to stdout
-        s2r slurm_script.sh                      # Read from file, write to stdout
-        s2r slurm_script.sh output.yaml          # Read from file, write to file
-        echo "..." | s2r                         # Pipe from stdin
-    """
+
+def main() -> None:
+    """Main CLI entry point."""
     args = sys.argv[1:]
+
+    # Check for help flag
+    if args and args[0] in ("-h", "--help", "help"):
+        print_help()
+        sys.exit(0)
 
     # Determine input source
     input_file: Optional[str] = None
     output_file: Optional[str] = None
 
     if len(args) == 0:
-        # Read from stdin
+        # Check if stdin is a TTY (interactive terminal)
+        if os.isatty(sys.stdin.fileno()):
+            # Interactive terminal - show help
+            print_help()
+            sys.exit(1)
+        # Read from stdin (piped input)
         input_source = "stdin"
     elif len(args) == 1:
         # Read from file, write to stdout
@@ -52,6 +77,11 @@ def main() -> None:
         sys.exit(1)
     except Exception as e:
         print(f"Error reading input: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if we got any input
+    if not slurm_script.strip():
+        print_help()
         sys.exit(1)
 
     # Convert
