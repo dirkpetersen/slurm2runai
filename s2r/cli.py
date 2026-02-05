@@ -2,9 +2,46 @@
 
 import os
 import sys
+import threading
+import time
 from typing import Optional
 
 from s2r.converter import convert_slurm_to_runai, ConversionError
+
+
+class Spinner:
+    """A simple spinner for showing progress in the terminal."""
+
+    def __init__(self, message: str = "Processing"):
+        self.message = message
+        self.spinning = False
+        self.thread: Optional[threading.Thread] = None
+        self.spinner_chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def start(self) -> None:
+        """Start the spinner."""
+        self.spinning = True
+        self.thread = threading.Thread(target=self._spin, daemon=True)
+        self.thread.start()
+
+    def _spin(self) -> None:
+        """Spin animation loop."""
+        idx = 0
+        while self.spinning:
+            char = self.spinner_chars[idx % len(self.spinner_chars)]
+            sys.stderr.write(f"\r{char} {self.message}...")
+            sys.stderr.flush()
+            idx += 1
+            time.sleep(0.1)
+
+    def stop(self, success: bool = True) -> None:
+        """Stop the spinner and clear the line."""
+        self.spinning = False
+        if self.thread:
+            self.thread.join(timeout=0.5)
+        # Clear the spinner line
+        sys.stderr.write("\r" + " " * (len(self.message) + 10) + "\r")
+        sys.stderr.flush()
 
 
 def print_help() -> None:
@@ -84,10 +121,23 @@ def main() -> None:
         print_help()
         sys.exit(1)
 
+    # Show spinner if stderr is a terminal (not redirected)
+    show_spinner = os.isatty(sys.stderr.fileno())
+    spinner = None
+
     # Convert
     try:
+        if show_spinner:
+            spinner = Spinner("Sending to AI for conversion")
+            spinner.start()
+
         runai_config = convert_slurm_to_runai(slurm_script)
+
+        if spinner:
+            spinner.stop()
     except ConversionError as e:
+        if spinner:
+            spinner.stop(success=False)
         print(f"Conversion error: {e}", file=sys.stderr)
         sys.exit(1)
 
