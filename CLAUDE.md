@@ -11,15 +11,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Architecture
 
 ```
-User/Library → s2r Client → Lambda Function URL → AWS Bedrock (Claude Sonnet 4.5) → Run.ai Config
-                                    ↓
-                               DynamoDB (rate limiting)
+User/Library → s2r Client (AWS SigV4 + HMAC) → Lambda Function URL (IAM auth) → AWS Bedrock (Claude 3.5 Sonnet v2) → Run.ai Config
+                                                           ↓
+                                                      DynamoDB (rate limiting)
 ```
 
 **Components:**
-1. **s2r Package** (`s2r/`): Client with HMAC-signed requests
+1. **s2r Package** (`s2r/`): Client with AWS SigV4 + HMAC-signed requests
 2. **Lambda Function** (`lambda/`): Validates signatures, rate limits, calls Bedrock
-3. **Security**: HMAC-SHA256 + timestamp (5min window) prevents abuse
+3. **Security**: AWS IAM authentication + HMAC-SHA256 + timestamp (5min window)
 
 ## Development Commands
 
@@ -35,9 +35,9 @@ pytest tests/test_converter.py
 ruff check .
 ruff format .
 
-# CLI Usage
-s2r < slurm_script.sh
-s2r input.sh output.yaml
+# CLI Usage (requires AWS credentials)
+AWS_PROFILE=your-profile s2r < slurm_script.sh
+AWS_PROFILE=your-profile s2r input.sh output.yaml
 ```
 
 ## Lambda Deployment
@@ -53,31 +53,29 @@ aws lambda update-function-code --function-name s2r-converter --zip-file fileb:/
 
 **Current deployment:**
 - Function: `s2r-converter` (us-west-2)
-- URL: `https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/`
-- Model: `anthropic.claude-sonnet-4-5-20250929-v1:0`
+- URL: `https://btohftfievc7zn5ffic7e5jrve0gzafw.lambda-url.us-west-2.on.aws/`
+- Auth: AWS_IAM (requires AWS credentials)
+- Model: `anthropic.claude-3-5-sonnet-20241022-v2:0`
 - DynamoDB: `s2r-rate-limits` table
-
-**Known Issues:**
-- Lambda Function URL may return 403 Forbidden due to IAM permission issues
-- The existing role (`DeleteUnusedVolumesRole`) may lack Bedrock permissions
-- See `docs/troubleshooting.md` for resolution steps
 
 ## Configuration
 
 ```bash
-# Client
-export S2R_API_ENDPOINT=https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/
+# Required: AWS credentials (via AWS_PROFILE, env vars, or IAM role)
+export AWS_PROFILE=your-profile
 
-# Security
-# Update SHARED_SECRET in s2r/auth.py and Lambda environment variable
+# Optional: Override defaults
+export S2R_API_ENDPOINT=https://btohftfievc7zn5ffic7e5jrve0gzafw.lambda-url.us-west-2.on.aws/
+export S2R_AWS_REGION=us-west-2
+export S2R_USE_IAM_AUTH=true
 ```
 
 ## Key Details
 
-- **Model**: Claude Sonnet 4.5 (20250929)
+- **Model**: Claude 3.5 Sonnet v2 (20241022)
 - **Rate limit**: 100 requests/IP/day
 - **Max payload**: 50KB
-- **Auth**: HMAC-SHA256 with 5-minute expiry
+- **Auth**: AWS IAM (SigV4) + HMAC-SHA256 with 5-minute expiry
 - **Region**: us-west-2
 
 ## Detailed Documentation

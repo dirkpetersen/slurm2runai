@@ -8,7 +8,7 @@ This function:
 
 Environment variables required:
 - SHARED_SECRET: Secret key for HMAC signature verification
-- BEDROCK_MODEL_ID: Bedrock model ID (e.g., anthropic.claude-sonnet-4-5-20250929-v1:0)
+- BEDROCK_MODEL_ID: Bedrock model ID (e.g., anthropic.claude-3-5-sonnet-20241022-v2:0)
 - MAX_REQUESTS_PER_IP_PER_DAY: Daily rate limit per IP (default: 100)
 """
 
@@ -25,7 +25,7 @@ from botocore.exceptions import ClientError
 
 # Configuration
 SHARED_SECRET = os.environ.get("SHARED_SECRET", "s2r-shared-secret-change-this-in-production")
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-5-20250929-v1:0")
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
 MAX_REQUESTS_PER_IP_PER_DAY = int(os.environ.get("MAX_REQUESTS_PER_IP_PER_DAY", "100"))
 MAX_PAYLOAD_SIZE = 50 * 1024  # 50KB max
 
