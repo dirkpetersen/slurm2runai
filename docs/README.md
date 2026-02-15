@@ -85,7 +85,6 @@ s2r (slurm2runai) converts SLURM batch scripts to Run.ai configurations using AI
 
 **Deployed Resources** (us-west-2):
 - Lambda Function: `s2r-converter`
-- Function URL: `https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/`
 - DynamoDB Table: `s2r-rate-limits`
 - Bedrock Model: `anthropic.claude-sonnet-4-5-20250929-v1:0`
 
@@ -105,7 +104,7 @@ s2r (slurm2runai) converts SLURM batch scripts to Run.ai configurations using AI
 
 2. **Set API endpoint**:
    ```bash
-   export S2R_API_ENDPOINT=https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/
+   export S2R_API_ENDPOINT=https://your-lambda-url.lambda-url.us-west-2.on.aws/
    ```
 
 3. **Convert a script**:

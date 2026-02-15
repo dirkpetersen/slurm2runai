@@ -13,7 +13,6 @@ This guide covers deploying the s2r Lambda function to AWS.
 
 **Deployed Resources:**
 - **Lambda Function**: `s2r-converter` (us-west-2)
-- **Function URL**: `https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/`
 - **DynamoDB Table**: `s2r-rate-limits` (us-west-2)
 - **IAM Role**: `DeleteUnusedVolumesRole` (reused existing role)
 - **Bedrock Model**: `anthropic.claude-sonnet-4-5-20250929-v1:0`
@@ -156,7 +155,7 @@ Test the Lambda function:
 
 ```bash
 # Set the endpoint
-export S2R_API_ENDPOINT=https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/
+export S2R_API_ENDPOINT=https://your-lambda-url.lambda-url.us-west-2.on.aws/
 
 # Run test
 cd /home/dp/gh/slurm2runai

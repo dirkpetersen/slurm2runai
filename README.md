@@ -96,7 +96,6 @@ The tool will generate an equivalent Run.ai configuration with:
 ## Current Deployment Status
 
 **Deployed Lambda Function** (us-west-2):
-- Function URL: `https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/`
 - Model: Claude Sonnet 4.5 (20250929)
 - Rate Limit: 100 requests/IP/day
 

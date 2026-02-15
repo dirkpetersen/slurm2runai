@@ -11,7 +11,7 @@ from s2r.auth import create_signed_headers
 # Default API endpoint - you'll replace this with your Lambda URL
 DEFAULT_API_ENDPOINT = os.environ.get(
     "S2R_API_ENDPOINT",
-    "https://btohftfievc7zn5ffic7e5jrve0gzafw.lambda-url.us-west-2.on.aws/"
+    "https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/"
 )
 
 # AWS region for Function URL (used for IAM auth)

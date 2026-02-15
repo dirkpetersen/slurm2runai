@@ -1,6 +1,6 @@
 [project]
 name = "s2r"
-version = "0.2.0"
+version = "0.2.1"
 description = "Convert SLURM submit scripts to Run.ai configurations using AI"
 readme = "README.md"
 requires-python = ">=3.8"

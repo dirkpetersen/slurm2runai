@@ -53,7 +53,6 @@ aws lambda update-function-code --function-name s2r-converter --zip-file fileb:/
 
 **Current deployment:**
 - Function: `s2r-converter` (us-west-2)
-- URL: `https://btohftfievc7zn5ffic7e5jrve0gzafw.lambda-url.us-west-2.on.aws/`
 - Auth: AWS_IAM (requires AWS credentials)
 - Model: `anthropic.claude-3-5-sonnet-20241022-v2:0`
 - DynamoDB: `s2r-rate-limits` table
@@ -65,7 +64,7 @@ aws lambda update-function-code --function-name s2r-converter --zip-file fileb:/
 export AWS_PROFILE=your-profile
 
 # Optional: Override defaults
-export S2R_API_ENDPOINT=https://btohftfievc7zn5ffic7e5jrve0gzafw.lambda-url.us-west-2.on.aws/
+export S2R_API_ENDPOINT=https://your-lambda-url.lambda-url.us-west-2.on.aws/
 export S2R_AWS_REGION=us-west-2
 export S2R_USE_IAM_AUTH=true
 ```

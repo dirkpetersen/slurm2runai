@@ -211,7 +211,7 @@ s2r invalid_script.sh || echo "Conversion failed"
 ### Endpoint
 
 ```
-POST https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/
+POST https://your-lambda-url.lambda-url.us-west-2.on.aws/
 ```
 
 ### Authentication
@@ -310,7 +310,7 @@ curl -X POST \
   -d "#!/bin/bash
 #SBATCH --gres=gpu:1
 python train.py" \
-  https://uqbglp42fwfy3yo77jcphk2bhu0wydft.lambda-url.us-west-2.on.aws/
+  https://your-lambda-url.lambda-url.us-west-2.on.aws/
 ```
 
 ### Rate Limiting
