@@ -18,7 +18,7 @@ DEFAULT_API_ENDPOINT = os.environ.get(
 DEFAULT_AWS_REGION = os.environ.get("S2R_AWS_REGION", "us-west-2")
 
 # Whether to use IAM authentication (requires boto3 and AWS credentials)
-USE_IAM_AUTH = os.environ.get("S2R_USE_IAM_AUTH", "true").lower() in ("true", "1", "yes")
+USE_IAM_AUTH = os.environ.get("S2R_USE_IAM_AUTH", "false").lower() in ("true", "1", "yes")
 
 
 class ConversionError(Exception):
