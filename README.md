@@ -100,7 +100,7 @@ The tool will generate an equivalent Run.ai configuration with:
 - Rate Limit: 100 requests/IP/day
 
 **Known Issues**:
-- Function URL may return 403 Forbidden due to IAM permission constraints
+- Lambda Function URL auth type needs to be changed from `AWS_IAM` to `NONE` (`aws lambda update-function-url-config --function-name s2r-converter --auth-type NONE`)
 - See [troubleshooting guide](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/troubleshooting.md#issue-1-lambda-function-url-returns-403-forbidden) for resolution
 
 ## Development
