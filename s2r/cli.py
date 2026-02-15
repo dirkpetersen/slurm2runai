@@ -1,12 +1,41 @@
 """Command-line interface for s2r."""
 
 import os
+import re
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 from s2r.converter import convert_slurm_to_runai, ConversionError
+
+
+def parse_response(response: str) -> Tuple[Optional[str], Optional[str]]:
+    """Parse AI response into YAML config and CLI command sections.
+
+    The AI returns markdown with code blocks: a ```yaml block and a ```bash/```shell block.
+
+    Returns:
+        Tuple of (yaml_content, cli_command), either may be None if not found.
+    """
+    yaml_content = None
+    cli_command = None
+
+    # Match ```yaml ... ``` blocks
+    yaml_match = re.search(r"```ya?ml\s*\n(.*?)```", response, re.DOTALL)
+    if yaml_match:
+        yaml_content = yaml_match.group(1).strip()
+
+    # Match ```bash or ```shell or ```sh blocks
+    cli_match = re.search(r"```(?:bash|shell|sh)\s*\n(.*?)```", response, re.DOTALL)
+    if cli_match:
+        cli_command = cli_match.group(1).strip()
+
+    # If no code blocks found, return the whole response as-is (fallback)
+    if yaml_content is None and cli_command is None:
+        return response.strip(), None
+
+    return yaml_content, cli_command
 
 
 class Spinner:
@@ -49,14 +78,15 @@ def print_help() -> None:
     print("s2r - Convert SLURM scripts to Run.ai configurations using AI", file=sys.stderr)
     print("", file=sys.stderr)
     print("Usage:", file=sys.stderr)
-    print("  s2r <input_file> [output_file]    Convert SLURM script file", file=sys.stderr)
-    print("  s2r < script.sh                   Read from stdin (piped input)", file=sys.stderr)
-    print("  cat script.sh | s2r               Read from stdin (piped input)", file=sys.stderr)
+    print("  s2r <input_file>                  Convert and save YAML, print CLI to stdout", file=sys.stderr)
+    print("  s2r <input_file> <output.yaml>    Convert and save YAML only", file=sys.stderr)
+    print("  s2r < script.sh                   Read from stdin, print CLI to stdout", file=sys.stderr)
+    print("  cat script.sh | s2r               Read from stdin, print CLI to stdout", file=sys.stderr)
     print("", file=sys.stderr)
     print("Examples:", file=sys.stderr)
-    print("  s2r job.slurm                     Convert and print to stdout", file=sys.stderr)
-    print("  s2r job.slurm output.yaml         Convert and save to file", file=sys.stderr)
-    print("  s2r < job.slurm > output.yaml     Using shell redirection", file=sys.stderr)
+    print("  s2r job.slurm                     Writes job.yaml, prints runai command", file=sys.stderr)
+    print("  s2r job.slurm output.yaml         Writes output.yaml only", file=sys.stderr)
+    print("  s2r < job.slurm                   Prints runai command to stdout", file=sys.stderr)
     print("", file=sys.stderr)
     print("Environment variables:", file=sys.stderr)
     print("  AWS_PROFILE                       AWS profile for authentication", file=sys.stderr)
@@ -91,15 +121,18 @@ def main() -> None:
         input_file = args[0]
         input_source = "file"
     elif len(args) == 2:
-        # Read from file, write to file
+        # Read from file, write to YAML file
         input_file = args[0]
         output_file = args[1]
+        if not output_file.lower().endswith((".yaml", ".yml")):
+            print("Error: Output file must have a .yaml or .yml extension", file=sys.stderr)
+            sys.exit(1)
         input_source = "file"
     else:
-        print("Usage: s2r [input_file] [output_file]", file=sys.stderr)
-        print("  No args: read from stdin, write to stdout", file=sys.stderr)
-        print("  One arg: read from file, write to stdout", file=sys.stderr)
-        print("  Two args: read from file, write to file", file=sys.stderr)
+        print("Usage: s2r [input_file] [output.yaml]", file=sys.stderr)
+        print("  No args: read from stdin, print CLI command to stdout", file=sys.stderr)
+        print("  One arg: save YAML file, print CLI command to stdout", file=sys.stderr)
+        print("  Two args: save YAML file only (output must be .yaml/.yml)", file=sys.stderr)
         sys.exit(1)
 
     # Read input
@@ -141,14 +174,38 @@ def main() -> None:
         print(f"Conversion error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Write output
+    # Parse response into YAML and CLI sections
+    yaml_content, cli_command = parse_response(runai_config)
+
+    # Write output based on mode
     try:
-        if output_file:
+        if input_source == "stdin":
+            # stdin: print CLI command to stdout only (no file)
+            if cli_command:
+                print(cli_command)
+            elif yaml_content:
+                print(yaml_content)
+
+        elif output_file:
+            # Two args with .yaml/.yml extension: write YAML file only, no stdout
             with open(output_file, "w", encoding="utf-8") as f:
-                f.write(runai_config)
+                f.write(yaml_content or runai_config)
             print(f"Run.ai configuration written to: {output_file}", file=sys.stderr)
+
         else:
-            print(runai_config)
+            # One arg: auto-generate .yaml file from input name + print CLI to stdout
+            base = os.path.splitext(input_file)[0]
+            yaml_file = base + ".yaml"
+            if yaml_content:
+                with open(yaml_file, "w", encoding="utf-8") as f:
+                    f.write(yaml_content)
+                print(f"Run.ai configuration written to: {yaml_file}", file=sys.stderr)
+            if cli_command:
+                print(cli_command)
+            elif not yaml_content:
+                # Fallback: no parsed sections, print raw response
+                print(runai_config)
+
     except Exception as e:
         print(f"Error writing output: {e}", file=sys.stderr)
         sys.exit(1)
