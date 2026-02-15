@@ -13,14 +13,14 @@ pip install s2r
 ### CLI Usage
 
 ```bash
-# Convert from stdin
+# Convert file: saves job.yaml, prints runai CLI command to stdout
+s2r job.slurm
+
+# Convert file: saves output.yaml only (no CLI output)
+s2r job.slurm output.yaml
+
+# Convert from stdin: prints runai CLI command to stdout (no file)
 s2r < my_slurm_script.sh
-
-# Convert from file to stdout
-s2r my_slurm_script.sh
-
-# Convert from file to file
-s2r my_slurm_script.sh output.yaml
 ```
 
 ### Library Usage
@@ -87,11 +87,11 @@ The tool will generate an equivalent Run.ai configuration with:
 
 ## Documentation
 
-- **[API Reference](docs/api.md)**: Complete API documentation for library and CLI
-- **[Architecture](docs/architecture.md)**: System design and component details
-- **[Deployment Guide](docs/deployment.md)**: AWS Lambda deployment instructions
-- **[Troubleshooting](docs/troubleshooting.md)**: Common issues and solutions
-- **[CLAUDE.md](CLAUDE.md)**: Quick reference for Claude Code
+- **[API Reference](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/api.md)**: Complete API documentation for library and CLI
+- **[Architecture](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/architecture.md)**: System design and component details
+- **[Deployment Guide](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/deployment.md)**: AWS Lambda deployment instructions
+- **[Troubleshooting](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/troubleshooting.md)**: Common issues and solutions
+- **[CLAUDE.md](https://github.com/dirkpetersen/slurm2runai/blob/main/CLAUDE.md)**: Quick reference for Claude Code
 
 ## Current Deployment Status
 
@@ -102,13 +102,13 @@ The tool will generate an equivalent Run.ai configuration with:
 
 **Known Issues**:
 - Function URL may return 403 Forbidden due to IAM permission constraints
-- See [troubleshooting guide](docs/troubleshooting.md#issue-1-lambda-function-url-returns-403-forbidden) for resolution
+- See [troubleshooting guide](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/troubleshooting.md#issue-1-lambda-function-url-returns-403-forbidden) for resolution
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for development commands and quick reference.
+See [CLAUDE.md](https://github.com/dirkpetersen/slurm2runai/blob/main/CLAUDE.md) for development commands and quick reference.
 
-For detailed architecture and deployment information, see the [docs/](docs/) directory.
+For detailed architecture and deployment information, see the [docs/](https://github.com/dirkpetersen/slurm2runai/tree/main/docs) directory.
 
 ## Self-Hosting
 
@@ -124,12 +124,12 @@ cd lambda
 python3 -m zipfile -c lambda.zip lambda_function.py
 aws lambda create-function --function-name s2r-converter ...
 
-# See docs/deployment.md for full instructions
+# See https://github.com/dirkpetersen/slurm2runai/blob/main/docs/deployment.md for full instructions
 ```
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](https://github.com/dirkpetersen/slurm2runai/blob/main/LICENSE) file for details.
 
 ## Contributing
 
