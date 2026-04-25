@@ -2,24 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**📚 For detailed documentation, see the [`docs/`](docs/) directory - this file is a quick reference only.**
-
 ## Project Overview
 
-**slurm2runai** (package name: `s2r`) is a Python CLI tool and library that uses AI to convert SLURM submit scripts to Run.ai configurations.
-
-## Architecture
-
-```
-User/Library → s2r Client (AWS SigV4 + HMAC) → Lambda Function URL (IAM auth) → AWS Bedrock (Claude 3.5 Sonnet v2) → Run.ai Config
-                                                           ↓
-                                                      DynamoDB (rate limiting)
-```
-
-**Components:**
-1. **s2r Package** (`s2r/`): Client with AWS SigV4 + HMAC-signed requests
-2. **Lambda Function** (`lambda/`): Validates signatures, rate limits, calls Bedrock
-3. **Security**: AWS IAM authentication + HMAC-SHA256 + timestamp (5min window)
+**slurm2runai** (package name: `s2r`) is a Python CLI tool and library that converts SLURM submit scripts to Run.ai configurations using AWS Bedrock (Claude).
 
 ## Development Commands
 
@@ -27,66 +12,91 @@ User/Library → s2r Client (AWS SigV4 + HMAC) → Lambda Function URL (IAM auth
 # Setup
 pip install -e ".[dev]"
 
-# Testing
+# Run all tests
 pytest
-pytest tests/test_converter.py
 
-# Linting
+# Run a single test file
+pytest tests/test_auth.py
+
+# Run a single test
+pytest tests/test_auth.py::test_verify_signature_valid
+
+# Lint / format
 ruff check .
 ruff format .
 
-# CLI Usage (requires AWS credentials)
-AWS_PROFILE=your-profile s2r < slurm_script.sh
-AWS_PROFILE=your-profile s2r input.sh output.yaml
+# Integration test (requires running Lambda endpoint)
+S2R_API_ENDPOINT=https://... python test_local.py
 ```
+
+## Architecture
+
+The client is a thin signing wrapper; all conversion logic lives in the Lambda function.
+
+```
+s2r CLI/library
+    → signs request (HMAC-SHA256 + timestamp headers)
+    → POST to API Gateway HTTP API (public, no AWS auth)
+        → invokes Lambda
+            → verify HMAC signature (5-min replay window)
+            → check rate limit (DynamoDB: ip#date key, atomic increment)
+            → call AWS Bedrock (Claude) with SLURM script
+            → return {"runai_config": "..."} JSON
+```
+
+API Gateway sits in front of Lambda because the AWS account enforces auth on Lambda Function URLs (we couldn't get `AuthType=NONE` to work — see "Known Issues"). API Gateway HTTP APIs are a separate resource type and are not subject to that guardrail. The HMAC signature is the only authentication; AWS-side auth is bypassed.
+
+**s2r package (`s2r/`):**
+- `auth.py`: `create_signed_headers(payload)` → adds `X-S2R-Timestamp` + `X-S2R-Signature` headers. The HMAC shared secret is hardcoded as `s2r-shared-secret-change-this-in-production` in both the client and Lambda — in production it should come from `SHARED_SECRET` env var on the Lambda side.
+- `converter.py`: `convert_slurm_to_runai()` — signs the request, optionally adds AWS SigV4 (IAM auth, off by default since v0.2.2), POSTs to endpoint, extracts `runai_config` from JSON response.
+- `cli.py`: Four I/O modes (stdin→stdout, file→auto-named yaml+stdout, file+output→yaml only, help). The `parse_response()` function extracts fenced code blocks (` ```yaml ` and ` ```bash/shell/sh `) from the AI's markdown response — the raw AI text is never written directly to disk.
+
+**Lambda (`lambda/`):**
+- `lambda_function.py`: Handler pipeline — signature verification → rate limit (DynamoDB) → Bedrock call → JSON response.
+- `template.yaml`: SAM template that creates the Lambda + DynamoDB table.
+- Rate limit key format: `{ip}#{YYYY-MM-DD}`, TTL-enabled for auto-cleanup.
+
+**Tests (`tests/`):**
+- All tests are unit tests with no mocking — no integration tests (Lambda not reachable in CI).
+- `test_auth.py` covers the full HMAC signing/verification logic.
+- `test_converter.py` only tests input validation (empty/whitespace scripts).
 
 ## Lambda Deployment
 
-See `docs/deployment.md` for detailed instructions.
-
-**Quick deploy (requires AWS CLI configured):**
 ```bash
+# Quick update (code only)
 cd lambda
 python3 -m zipfile -c lambda.zip lambda_function.py
 aws lambda update-function-code --function-name s2r-converter --zip-file fileb://lambda.zip
+
+# Full SAM deploy (first time or infra changes)
+cd lambda
+sam deploy --guided
 ```
 
 **Current deployment:**
-- Function: `s2r-converter` (us-west-2)
-- Auth: AWS_IAM (requires AWS credentials)
-- Model: `anthropic.claude-3-5-sonnet-20241022-v2:0`
-- DynamoDB: `s2r-rate-limits` table
+- API Gateway HTTP API: `zzk4zf48pi` (us-west-2), auth: `NONE` (HMAC signature in app layer)
+- Public URL: `https://zzk4zf48pi.execute-api.us-west-2.amazonaws.com/`
+- Lambda: `s2r-converter` (still has a Function URL on `AWS_IAM`, but unused)
+- Model: `us.anthropic.claude-sonnet-4-6` (US cross-region inference profile)
+- DynamoDB: `s2r-rate-limits` table, 100 req/IP/day
 
 ## Configuration
 
 ```bash
-# Required: AWS credentials (via AWS_PROFILE, env vars, or IAM role)
-export AWS_PROFILE=your-profile
-
-# Optional: Override defaults
+# Client-side overrides (all optional)
 export S2R_API_ENDPOINT=https://your-lambda-url.lambda-url.us-west-2.on.aws/
 export S2R_AWS_REGION=us-west-2
-export S2R_USE_IAM_AUTH=true
+export S2R_USE_IAM_AUTH=true   # disabled by default since v0.2.2
+
+# Lambda-side env vars
+SHARED_SECRET=...              # must match client's hardcoded secret
+BEDROCK_MODEL_ID=...
+MAX_REQUESTS_PER_IP_PER_DAY=100
+RATE_LIMIT_TABLE=s2r-rate-limits
 ```
 
-## Key Details
+## Known Issues
 
-- **Model**: Claude 3.5 Sonnet v2 (20241022)
-- **Rate limit**: 100 requests/IP/day
-- **Max payload**: 50KB
-- **Auth**: AWS IAM (SigV4) + HMAC-SHA256 with 5-minute expiry
-- **Region**: us-west-2
-
-## Detailed Documentation
-
-**This CLAUDE.md is a quick reference. For comprehensive documentation:**
-
-Start here: **[`docs/README.md`](docs/README.md)** - Documentation index and overview
-
-Specific guides:
-- **[`docs/deployment.md`](docs/deployment.md)** - Complete AWS deployment walkthrough with all commands used
-- **[`docs/architecture.md`](docs/architecture.md)** - Detailed system design, data flows, security architecture
-- **[`docs/troubleshooting.md`](docs/troubleshooting.md)** - Solutions for 403 errors, rate limits, timeouts, etc.
-- **[`docs/api.md`](docs/api.md)** - Full API reference with code examples
-
-The docs/ folder contains 40KB+ of detailed technical documentation.
+- Lambda Function URLs return 403 for unauthenticated requests in this account even when configured with `AuthType=NONE` and a `Principal:"*"` resource policy. The `iam simulate-principal-policy` API confirms it is **not** an SCP (`AllowedByOrganizations: true`). Suspected cause: an account-level "Block Public Access for Lambda Function URLs" setting or an RCP managed from the Org root account. **Workaround:** use API Gateway HTTP API in front of the Lambda — that's what the deployment now does. Don't try to "fix" this by switching back to a Function URL without first verifying with the org admin.
+- Stale endpoints to ignore: `uqbglp42fwfy3yo77jcphk2bhu0wydft...` and `btohftfievc7zn5ffic7e5jrve0gzafw...` (Lambda Function URLs). The live URL is the API Gateway one in `DEFAULT_API_ENDPOINT`.

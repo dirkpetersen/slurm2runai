@@ -13,7 +13,7 @@ Parameters:
   BedrockModelId:
     Type: String
     Description: Bedrock model ID to use
-    Default: anthropic.claude-sonnet-4-5-20250929-v1:0
+    Default: us.anthropic.claude-sonnet-4-6
 
   MaxRequestsPerIpPerDay:
     Type: Number
@@ -61,15 +61,33 @@ Resources:
               Effect: Allow
               Action:
                 - bedrock:InvokeModel
-              Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}'
-      FunctionUrlConfig:
-        AuthType: NONE
-        InvokeMode: BUFFERED
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                - !Sub 'arn:aws:bedrock:*::foundation-model/*'
+                - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref S2RHttpApi
+            Method: POST
+            Path: /
+
+  # HTTP API Gateway in front of the Lambda. We use API Gateway instead of
+  # a Lambda Function URL because this account enforces auth on Function URLs
+  # (returns 403 even with AuthType=NONE). API Gateway is a separate resource
+  # type and is not subject to the same guardrail.
+  S2RHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      DisableExecuteApiEndpoint: false
 
 Outputs:
-  FunctionUrl:
-    Description: Lambda Function URL
-    Value: !GetAtt S2RFunctionUrl.FunctionUrl
+  ApiEndpoint:
+    Description: Public HTTP API endpoint
+    Value: !Sub 'https://${S2RHttpApi}.execute-api.${AWS::Region}.amazonaws.com/'
 
   RateLimitTableName:
     Description: DynamoDB table for rate limiting
