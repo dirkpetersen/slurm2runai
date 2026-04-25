@@ -39,7 +39,7 @@ def _get_aws_signed_headers(
         from botocore.awsrequest import AWSRequest
     except ImportError:
         raise ConversionError(
-            "boto3 is required for IAM authentication. Install with: pip install boto3"
+            "boto3 is required for IAM authentication. Install with: pip install 's2r[iam-auth]'"
         )
 
     # Get credentials from default credential chain (env vars, ~/.aws/credentials, IAM role, etc.)

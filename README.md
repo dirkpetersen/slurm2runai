@@ -8,6 +8,12 @@ Convert SLURM batch scripts to Run.ai configurations using AI.
 pip install s2r
 ```
 
+No AWS account or credentials required — the public hosted endpoint is rate-limited to 100 requests per IP per day. If you self-host and want to keep the Lambda behind IAM auth, install with the optional dependency:
+
+```bash
+pip install 's2r[iam-auth]'
+```
+
 ## Quick Start
 
 ### CLI Usage
@@ -43,9 +49,9 @@ print(runai_config)
 
 ## How It Works
 
-1. **Client**: The `s2r` library signs your SLURM script with HMAC-SHA256
-2. **API**: Sends the signed request to an AWS Lambda endpoint
-3. **AI**: Lambda calls AWS Bedrock (Claude) to perform the conversion
+1. **Client**: The `s2r` library signs your SLURM script with HMAC-SHA256 (no AWS credentials needed)
+2. **API**: Sends the signed request to an AWS API Gateway HTTP endpoint
+3. **AI**: An AWS Lambda behind the API calls Bedrock (Claude Sonnet 4.6) to perform the conversion
 4. **Response**: Returns the Run.ai YAML configuration or CLI commands
 
 ## Features
@@ -60,7 +66,15 @@ print(runai_config)
 By default, the tool uses a public API endpoint. If you're deploying your own:
 
 ```bash
-export S2R_API_ENDPOINT=https://your-lambda-url.lambda-url.us-east-1.on.aws/
+export S2R_API_ENDPOINT=https://your-api-id.execute-api.us-west-2.amazonaws.com/
+```
+
+If you self-host with IAM auth on the endpoint, install the IAM extra and enable signing:
+
+```bash
+pip install 's2r[iam-auth]'
+export S2R_USE_IAM_AUTH=true
+export S2R_AWS_REGION=us-west-2
 ```
 
 ## Example
@@ -95,13 +109,11 @@ The tool will generate an equivalent Run.ai configuration with:
 
 ## Current Deployment Status
 
-**Deployed Lambda Function** (us-west-2):
-- Model: Claude Sonnet 4.5 (20250929)
-- Rate Limit: 100 requests/IP/day
-
-**Known Issues**:
-- Lambda Function URL auth type needs to be changed from `AWS_IAM` to `NONE` (`aws lambda update-function-url-config --function-name s2r-converter --auth-type NONE`)
-- See [troubleshooting guide](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/troubleshooting.md#issue-1-lambda-function-url-returns-403-forbidden) for resolution
+**Deployed in us-west-2:**
+- API Gateway HTTP API → Lambda `s2r-converter` → Bedrock
+- Model: Claude Sonnet 4.6 (`us.anthropic.claude-sonnet-4-6` cross-region inference profile)
+- Rate Limit: 100 requests/IP/day (DynamoDB-backed)
+- Public endpoint, no AWS credentials required to use the client
 
 ## Development
 
@@ -111,20 +123,20 @@ For detailed architecture and deployment information, see the [docs/](https://gi
 
 ## Self-Hosting
 
-To deploy your own instance:
+To deploy your own instance with API Gateway + Lambda:
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/slurm2runai.git
-cd slurm2runai
+git clone https://github.com/dirkpetersen/slurm2runai.git
+cd slurm2runai/lambda
 
-# Deploy Lambda function
-cd lambda
-python3 -m zipfile -c lambda.zip lambda_function.py
-aws lambda create-function --function-name s2r-converter ...
+# Deploy with SAM (creates API Gateway, Lambda, DynamoDB)
+sam deploy --guided
 
-# See https://github.com/dirkpetersen/slurm2runai/blob/main/docs/deployment.md for full instructions
+# Point your client at the new endpoint
+export S2R_API_ENDPOINT=https://<api-id>.execute-api.<region>.amazonaws.com/
 ```
+
+See [docs/deployment.md](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/deployment.md) for full instructions.
 
 ## License
 

@@ -1,6 +1,6 @@
 [project]
 name = "s2r"
-version = "0.3.0"
+version = "0.3.1"
 description = "Convert SLURM submit scripts to Run.ai configurations using AI"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -10,15 +10,17 @@ authors = [
 ]
 dependencies = [
     "requests>=2.31.0",
-    "boto3>=1.28.0",
 ]
 
 [project.optional-dependencies]
+iam-auth = [
+    "boto3>=1.28.0",
+]
 dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
-    "boto3>=1.28.0",  # For Lambda development/testing
+    "boto3>=1.28.0",
 ]
 
 [project.scripts]
