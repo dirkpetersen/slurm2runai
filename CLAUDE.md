@@ -80,6 +80,7 @@ sam deploy --guided
 - Lambda: `s2r-converter` (still has a Function URL on `AWS_IAM`, but unused)
 - Model: `us.anthropic.claude-sonnet-4-6` (US cross-region inference profile)
 - DynamoDB: `s2r-rate-limits` table, 100 req/IP/day
+- Prompt produces **two fenced blocks** per response: ` ```yaml ` (TrainingWorkload CRD) + ` ```bash ` (CLI v2 shell script); `parse_response()` in `cli.py` splits them automatically
 
 ## Configuration
 

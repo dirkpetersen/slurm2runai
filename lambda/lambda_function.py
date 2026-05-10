@@ -87,27 +87,101 @@ def check_rate_limit(ip_address: str) -> bool:
 
 def call_bedrock(slurm_script: str) -> str:
     """Call AWS Bedrock to convert SLURM script to Run.ai config."""
-    prompt = f"""You are an expert in HPC job scheduling and Kubernetes orchestration.
-Convert the following SLURM batch script to a Run.ai job configuration.
+    prompt = f"""You are an expert in HPC job scheduling and NVIDIA Run:ai.
+Convert the following SLURM batch script to NVIDIA Run:ai format.
 
 SLURM Script:
 ```
 {slurm_script}
 ```
 
-Please provide:
-1. A Run.ai YAML configuration file that captures all the resource requirements, or
-2. The equivalent Run.ai CLI commands if YAML is not appropriate
+Produce EXACTLY two fenced code blocks in this order — nothing else, no prose:
 
-Important considerations:
-- Map SLURM resource directives (#SBATCH) to Run.ai resource requests
-- Convert GPU requests (--gres=gpu:X) to Run.ai GPU specifications
-- Map memory and CPU requests appropriately
-- Handle job arrays, dependencies, and time limits if present
-- Include proper image/container specifications
-- Add appropriate environment variables and working directory settings
+## Block 1 — YAML manifest (TrainingWorkload CRD)
 
-Provide ONLY the Run.ai configuration/commands, no additional explanation."""
+```yaml
+apiVersion: run.ai/v2alpha1
+kind: TrainingWorkload
+metadata:
+  name: <job-name-from-slurm>          # lowercase, hyphens only, max 63 chars
+  namespace: runai-<PROJECT>            # replace <PROJECT> with a placeholder comment
+  labels:
+    kai.scheduler/preemptibility: preemptible   # preemptible for batch/training
+    priorityClassName: low
+spec:
+  image:
+    value: <IMAGE>                      # use a sensible default if not in script
+  imagePullPolicy:
+    value: IfNotPresent
+  command:
+    value: <entrypoint>                 # first token of the job command
+  args:
+    value:
+      - <arg1>                          # remaining tokens as list items
+  workingDir:
+    value: <working-directory>          # from #SBATCH --chdir or script cd
+  environment:
+    items:
+      VAR_NAME:
+        value: "value"                  # from export or #SBATCH --export
+  compute:
+    # Use gpuDevicesRequest (integer) for whole GPUs:
+    gpuDevicesRequest: <N>
+    # OR use gpuPortionRequest (float 0.0-1.0) for fractional GPU:
+    # gpuPortionRequest: 0.5
+    cpuCoreRequest: <cores>             # from --cpus-per-task
+    cpuMemoryRequest: <NM or NG>        # from --mem, e.g. 32G
+  autoScalabilityConfig:
+    autoDeleteTimeAfterCompletionSeconds: 86400   # clean up after 24 h
+```
+
+## Block 2 — Shell script (CLI v2)
+
+```bash
+#!/usr/bin/env bash
+# Run:ai equivalent of the SLURM script above.
+# Usage: bash <job-name>.sh
+# Set PROJECT before running: export RUNAI_PROJECT=your-project
+set -euo pipefail
+
+PROJECT="${{RUNAI_PROJECT:-your-project}}"
+JOB=<job-name>
+
+runai training standard submit "$JOB" \\
+  --project "$PROJECT" \\
+  --image <IMAGE> \\
+  --image-pull-policy IfNotPresent \\
+  --gpu-devices-request <N> \\          # whole GPU; use --gpu-portion-request 0.5 for fractional
+  --cpu-core-request <cores> \\
+  --cpu-memory-request <NM or NG> \\
+  --working-dir <working-directory> \\
+  --environment-variable KEY=VALUE \\   # repeat for each env var
+  --preemptibility preemptible \\
+  --priority low \\
+  --auto-deletion-time-after-completion 24h \\
+  --command -- <full command and args>
+```
+
+SLURM → Run:ai mapping rules:
+- --job-name          → metadata.name and JOB variable (lowercase, hyphens)
+- --gres=gpu:N        → gpuDevicesRequest: N  (--gpu-devices-request N in CLI)
+- --gres=gpu:0.N      → gpuPortionRequest: 0.N (--gpu-portion-request 0.N in CLI)
+- --cpus-per-task=N   → cpuCoreRequest: N  (--cpu-core-request N)
+- --mem=XG/XM         → cpuMemoryRequest: XG/XM  (--cpu-memory-request XG)
+- --time=             → omit (Run:ai uses --auto-deletion-time-after-completion instead)
+- --partition=        → omit or use --node-pools if partition maps to a known node pool
+- --chdir / cd        → workingDir / --working-dir
+- export VAR=VAL      → environment.items / --environment-variable VAR=VAL
+- module load         → omit (bake into container image)
+- #SBATCH --array     → omit with a comment that job arrays need --runs N in Run:ai
+
+If the script has no explicit container image, use a sensible default based on
+the workload (e.g. nvcr.io/nvidia/pytorch:25.06-py3 for PyTorch/CUDA work,
+nvcr.io/nvidia/tensorflow:25.03-tf2-py3 for TensorFlow, ubuntu:22.04 otherwise)
+and add a comment telling the user to replace it.
+
+Replace all <PLACEHOLDER> values with real values derived from the SLURM script.
+Output ONLY the two fenced code blocks."""
 
     # Prepare request for Claude on Bedrock
     request_body = {

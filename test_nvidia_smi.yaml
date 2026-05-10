@@ -1,0 +1,17 @@
+apiVersion: run.ai/v2alpha1
+kind: TrainingWorkload
+metadata:
+  name: test-nvidia-smi
+  namespace: runai-osu-default
+  labels:
+    kai.scheduler/preemptibility: preemptible
+    priorityClassName: low
+spec:
+  image:
+    value: nvcr.io/nvidia/pytorch:25.06-py3
+  imagePullPolicy:
+    value: IfNotPresent
+  command:
+    value: nvidia-smi
+  compute:
+    gpuPortionRequest: 0.1

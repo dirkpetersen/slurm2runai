@@ -1,0 +1,57 @@
+apiVersion: run.ai/v2alpha1
+kind: TrainingWorkload
+metadata:
+  name: dp1
+  namespace: runai-osu-default
+  labels:
+    project: osu-default
+spec:
+  # Image
+  image:
+    value: nvcr.io/nvidia/pytorch:25.06-py3
+  imagePullPolicy:
+    value: IfNotPresent
+
+  # Command
+  command:
+    value: jupyter-lab
+  args:
+    value:
+      - "--NotebookApp.token=''"
+      - --ServerApp.allow_remote_access=true
+      - --allow-root
+      - --port=8888
+      - --no-browser
+
+  # Working directory
+  workingDir:
+    value: /opt/NeMo
+
+  # Environment variables
+  environment:
+    items:
+      JUPYTER_PORT:
+        value: "8888"
+      RUNAI_JOB_NAME:
+        value: $(RUNAI_JOB_NAME)
+      RUNAI_PROJECT:
+        value: $(RUNAI_PROJECT)
+
+  # Compute resources
+  gpu:
+    value: "0.05"
+
+  # Scheduling
+  priorityClass:
+    value: train-on-demand
+  preemptible:
+    value: true
+  nodePool:
+    value: default
+
+  # Exposed URL (Jupyter notebook)
+  exposedUrls:
+    - name: templt-0
+      toolType: jupyter-notebook
+      connectionType: ExternalUrl
+      container: 8888
