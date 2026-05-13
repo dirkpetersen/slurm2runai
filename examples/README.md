@@ -11,9 +11,31 @@ runai login
 
 # Confirm your project is visible
 runai project list          # → osu-default
+```
 
-# Set default project for the session
-runai project set osu-default
+### Environment variables for smoother conversion
+
+Setting these before running `s2r` causes the AI to fill in real values instead of
+`<PROJECT>` / `<CLUSTER>` / `<BUCKET>` placeholders in the generated YAML and shell script:
+
+| Variable | What it controls |
+|---|---|
+| `RUNAI_PROJECT` | Run:ai project name → used in `--project` and `namespace: runai-<PROJECT>` |
+| `RUNAI_BUCKET` | Object-storage bucket for input/output data — mounted at `/mnt/<bucket-name>` |
+| `RUNAI_CACHE` | Name of a pre-defined HostPath datasource for cache (default: `cache`) |
+
+```bash
+export RUNAI_PROJECT=osu-default
+export RUNAI_BUCKET=s3://my-bucket/jobs   # optional
+export RUNAI_CACHE=cache                  # optional — name from 'runai datasource list'
+```
+
+These only affect the s2r conversion output — `runai` CLI itself reads `RUNAI_PROJECT`
+natively so setting it once covers both tools.
+
+The easiest way to set all of these is:
+```bash
+s2r --config   # interactive wizard: auto-detects from runai CLI and saves to ~/.runai/runai.env
 ```
 
 ---

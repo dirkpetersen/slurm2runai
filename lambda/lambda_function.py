@@ -133,6 +133,13 @@ spec:
     cpuMemoryRequest: <NM or NG>        # from --mem, e.g. 32G
   autoScalabilityConfig:
     autoDeleteTimeAfterCompletionSeconds: 86400   # clean up after 24 h
+  storage:                             # only if RUNAI_BUCKET is set in s2r context
+    s3:
+      instances:
+        - bucket: <RUNAI_BUCKET_NAME>
+          path: <RUNAI_BUCKET_MOUNT>   # /mnt/<bucket-name>
+          # accessKeySecret, secretKeyOfAccessKeyId, secretKeyOfSecretKey:
+          # leave blank if the cluster uses IAM roles / IRSA for S3 access
 ```
 
 ## Block 2 — Shell script (CLI v2)
@@ -147,15 +154,21 @@ set -euo pipefail
 PROJECT="${{RUNAI_PROJECT:-your-project}}"
 JOB=<job-name>
 
+# Use whole GPU (--gpu-devices-request) or fractional (--gpu-portion-request 0.5).
+# Repeat --environment-variable for each env var.
+# Include --s3 only if RUNAI_BUCKET is in the s2r context.
+# Include --datasource only if RUNAI_CACHE is in the s2r context.
 runai training standard submit "$JOB" \\
   --project "$PROJECT" \\
   --image <IMAGE> \\
   --image-pull-policy IfNotPresent \\
-  --gpu-devices-request <N> \\          # whole GPU; use --gpu-portion-request 0.5 for fractional
+  --gpu-devices-request <N> \\
   --cpu-core-request <cores> \\
   --cpu-memory-request <NM or NG> \\
   --working-dir <working-directory> \\
-  --environment-variable KEY=VALUE \\   # repeat for each env var
+  --environment-variable KEY=VALUE \\
+  --s3 name=<RUNAI_BUCKET_NAME>,bucket=<RUNAI_BUCKET_NAME>,path=<RUNAI_BUCKET_MOUNT> \\
+  --datasource type=hostPath,name=<RUNAI_CACHE> \\
   --preemptibility preemptible \\
   --priority low \\
   --auto-deletion-time-after-completion 24h \\
@@ -174,6 +187,11 @@ SLURM → Run:ai mapping rules:
 - export VAR=VAL      → environment.items / --environment-variable VAR=VAL
 - module load         → omit (bake into container image)
 - #SBATCH --array     → omit with a comment that job arrays need --runs N in Run:ai
+- RUNAI_BUCKET_NAME   → storage.s3.instances[].bucket and --s3 bucket= (mount at RUNAI_BUCKET_MOUNT)
+- RUNAI_BUCKET_MOUNT  → storage.s3.instances[].path and --s3 path= (default: /mnt/<bucket-name>)
+- RUNAI_CACHE         → --datasource type=hostPath,name=<value>  (pre-defined cluster datasource, mount path is baked in)
+- If RUNAI_BUCKET is NOT set in the context header, omit the storage.s3 block and --s3 flag entirely.
+- If RUNAI_CACHE is NOT set in the context header, omit the --datasource flag entirely.
 
 If the script has no explicit container image, use a sensible default based on
 the workload (e.g. nvcr.io/nvidia/pytorch:25.06-py3 for PyTorch/CUDA work,

@@ -6,19 +6,44 @@ from typing import Optional
 import requests
 
 from s2r.auth import create_signed_headers
-
+from s2r.env import load_env_file
 
 # Default API endpoint - you'll replace this with your Lambda URL
-DEFAULT_API_ENDPOINT = os.environ.get(
-    "S2R_API_ENDPOINT",
-    "https://zzk4zf48pi.execute-api.us-west-2.amazonaws.com/"
-)
+DEFAULT_API_ENDPOINT_FALLBACK = "https://zzk4zf48pi.execute-api.us-west-2.amazonaws.com/"
 
-# AWS region for Function URL (used for IAM auth)
-DEFAULT_AWS_REGION = os.environ.get("S2R_AWS_REGION", "us-west-2")
 
-# Whether to use IAM authentication (requires boto3 and AWS credentials)
-USE_IAM_AUTH = os.environ.get("S2R_USE_IAM_AUTH", "false").lower() in ("true", "1", "yes")
+def _bucket_name(bucket: str) -> str:
+    """Extract bare bucket name from s3://bucket/path or plain bucket."""
+    name = bucket
+    for prefix in ("s3://", "s3a://", "s3n://"):
+        if name.lower().startswith(prefix):
+            name = name[len(prefix):]
+            break
+    return name.split("/")[0]
+
+
+def _inject_context(slurm_script: str) -> str:
+    """Prepend a context block with Run:ai hints if any are set in the environment."""
+    project = os.environ.get("RUNAI_PROJECT", "")
+    bucket  = os.environ.get("RUNAI_BUCKET", "")
+    cache   = os.environ.get("RUNAI_CACHE", "")
+
+    lines = []
+    if project:
+        lines.append(f"# RUNAI_PROJECT: {project}")
+    if bucket:
+        bname = _bucket_name(bucket)
+        lines.append(f"# RUNAI_BUCKET: {bucket}")
+        lines.append(f"# RUNAI_BUCKET_NAME: {bname}")
+        lines.append(f"# RUNAI_BUCKET_MOUNT: /mnt/{bname}")
+    if cache:
+        lines.append(f"# RUNAI_CACHE: {cache}")
+    if not lines:
+        return slurm_script
+    header = "# --- s2r context (use these values in the output) ---\n"
+    header += "\n".join(lines) + "\n"
+    header += "# -----------------------------------------------------\n"
+    return header + slurm_script
 
 
 class ConversionError(Exception):
@@ -89,9 +114,15 @@ def convert_slurm_to_runai(
     if not slurm_script.strip():
         raise ConversionError("SLURM script cannot be empty")
 
-    endpoint = api_endpoint or DEFAULT_API_ENDPOINT
-    iam_auth = use_iam_auth if use_iam_auth is not None else USE_IAM_AUTH
-    region = aws_region or DEFAULT_AWS_REGION
+    # Load runai.env into os.environ on first use (shell env still wins).
+    load_env_file()
+
+    slurm_script = _inject_context(slurm_script)
+    endpoint = api_endpoint or os.environ.get("S2R_API_ENDPOINT", DEFAULT_API_ENDPOINT_FALLBACK)
+    if use_iam_auth is None:
+        use_iam_auth = os.environ.get("S2R_USE_IAM_AUTH", "false").lower() in ("true", "1", "yes")
+    iam_auth = use_iam_auth
+    region = aws_region or os.environ.get("S2R_AWS_REGION", "us-west-2")
 
     # Create signed request headers (HMAC signature for Lambda validation)
     headers = create_signed_headers(slurm_script)

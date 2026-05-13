@@ -1,6 +1,6 @@
-# s2r - SLURM to Run.ai Converter
+# s2r - SLURM to Run:ai Converter
 
-Convert SLURM batch scripts to Run.ai configurations using AI.
+Convert SLURM batch scripts to Run:ai configurations using AI.
 
 ## Installation
 
@@ -8,144 +8,175 @@ Convert SLURM batch scripts to Run.ai configurations using AI.
 pip install s2r
 ```
 
-No AWS account or credentials required — the public hosted endpoint is rate-limited to 100 requests per IP per day. If you self-host and want to keep the Lambda behind IAM auth, install with the optional dependency:
+No AWS account or credentials required — a public hosted endpoint handles
+conversion (rate-limited to 100 requests per IP per day).
 
 ```bash
-pip install 's2r[iam-auth]'
+pip install 's2r[iam-auth]'   # only needed if you self-host behind IAM auth
 ```
 
 ## Quick Start
 
-### CLI Usage
+### First run — setup wizard
 
-```bash
-# Convert file: saves job.yaml, prints runai CLI command to stdout
-s2r job.slurm
+On the first run with no arguments `s2r` detects your Run:ai environment and
+saves the configuration to `~/.runai/runai.env`:
 
-# Convert file: saves output.yaml only (no CLI output)
-s2r job.slurm output.yaml
+```
+$ s2r
+s2r — SLURM to Run:ai converter
 
-# Convert from stdin: prints runai CLI command to stdout (no file)
-s2r < my_slurm_script.sh
+runai CLI detected in PATH.
+Auto-detect project, cluster, and datasources from 'runai' CLI? [Y/n]:
+Detected:
+  project = osu-default
+  datasources:
+    cache  (HostPath)
+    my-bucket  (S3)
+
+Configure environment variables now? [Y/n]:
+RUNAI_PROJECT [osu-default]:
+RUNAI_BUCKET  (optional, S3 datasource name or s3://uri) [my-bucket]:
+RUNAI_CACHE  (datasource name for cache) [cache]:
+
+Saved to /home/user/.runai/runai.env:
+  RUNAI_PROJECT=osu-default
+  RUNAI_BUCKET=my-bucket
+  RUNAI_CACHE=cache
+
+These will be loaded automatically next time you run s2r.
 ```
 
-### Library Usage
+Run `s2r --config` at any time to update the configuration.
+
+### Converting scripts
+
+```bash
+# Convert file — saves job.yaml, prints runai CLI command to stdout
+s2r job.slurm
+
+# Convert file — saves output.yaml only
+s2r job.slurm output.yaml
+
+# Convert from stdin — prints runai CLI command to stdout
+s2r < my_slurm_script.sh
+cat job.slurm | s2r
+```
+
+### Library usage
 
 ```python
 from s2r import convert_slurm_to_runai
 
-slurm_script = """
+result = convert_slurm_to_runai("""
 #!/bin/bash
 #SBATCH --job-name=my-job
 #SBATCH --gres=gpu:2
 #SBATCH --mem=32G
 
 python train.py
-"""
-
-runai_config = convert_slurm_to_runai(slurm_script)
-print(runai_config)
+""")
+print(result)
 ```
 
 ## How It Works
 
-1. **Client**: The `s2r` library signs your SLURM script with HMAC-SHA256 (no AWS credentials needed)
-2. **API**: Sends the signed request to an AWS API Gateway HTTP endpoint
-3. **AI**: An AWS Lambda behind the API calls Bedrock (Claude Sonnet 4.6) to perform the conversion
-4. **Response**: Returns the Run.ai YAML configuration or CLI commands
-
-## Features
-
-- **Free to use**: The service is provided at no cost (rate-limited)
-- **Secure**: Signed requests prevent unauthorized API usage
-- **Rate-limited**: 100 requests per IP per day
-- **Simple**: Works with stdin, files, or as a library
+1. `s2r` loads `~/.runai/runai.env` and injects your project/bucket/cache as
+   context into the SLURM script
+2. Signs the request with HMAC-SHA256 (no AWS credentials needed on the client)
+3. POSTs to an AWS API Gateway HTTP endpoint
+4. A Lambda behind the API calls Bedrock (Claude Sonnet 4.6) to convert the script
+5. Returns two fenced blocks: a `TrainingWorkload` YAML manifest + a `runai` shell script
 
 ## Configuration
 
-By default, the tool uses a public API endpoint. If you're deploying your own:
+### `~/.runai/runai.env` (auto-loaded on every run)
+
+Created by `s2r --config` or on first run. Supports standard `.env` format.
+Shell environment variables always take precedence.
+
+| Variable | Effect |
+|---|---|
+| `RUNAI_PROJECT` | Fills `--project` and `namespace: runai-<PROJECT>` in output |
+| `RUNAI_BUCKET` | S3 datasource name or `s3://uri` — mounted at `/mnt/<name>` |
+| `RUNAI_CACHE` | HostPath datasource name for cache (e.g. `cache`) |
+
+### Other environment variables
 
 ```bash
-export S2R_API_ENDPOINT=https://your-api-id.execute-api.us-west-2.amazonaws.com/
+export S2R_API_ENDPOINT=https://...   # custom endpoint (self-hosted)
+export S2R_AWS_REGION=us-west-2       # region for SigV4 (self-hosted IAM auth)
+export S2R_USE_IAM_AUTH=true          # enable IAM auth (requires s2r[iam-auth])
+export S2R_VERBOSE=1                  # show detection/API warnings
 ```
 
-If you self-host with IAM auth on the endpoint, install the IAM extra and enable signing:
-
-```bash
-pip install 's2r[iam-auth]'
-export S2R_USE_IAM_AUTH=true
-export S2R_AWS_REGION=us-west-2
-```
-
-## Example
+## Example output
 
 Given this SLURM script:
 
 ```bash
 #!/bin/bash
-#SBATCH --job-name=pytorch-training
-#SBATCH --nodes=1
+#SBATCH --job-name=train
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:2
-#SBATCH --time=24:00:00
 
 python train.py --epochs 100
 ```
 
-The tool will generate an equivalent Run.ai configuration with:
-- GPU resource requests (2 GPUs)
-- CPU and memory allocations
-- Job name and command
-- Appropriate container/image specifications
+`s2r` produces a `train.yaml` (TrainingWorkload CRD) and prints the equivalent
+`runai training standard submit` command to stdout, with `RUNAI_PROJECT`,
+`--s3`, and `--datasource` filled in from your saved configuration.
 
-## Documentation
+## S3 datasource auto-provisioning
 
-- **[API Reference](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/api.md)**: Complete API documentation for library and CLI
-- **[Architecture](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/architecture.md)**: System design and component details
-- **[Deployment Guide](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/deployment.md)**: AWS Lambda deployment instructions
-- **[Troubleshooting](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/troubleshooting.md)**: Common issues and solutions
-- **[CLAUDE.md](https://github.com/dirkpetersen/slurm2runai/blob/main/CLAUDE.md)**: Quick reference for Claude Code
+If you enter a bucket name that is not yet registered in Run:ai, the setup
+wizard offers to create it automatically using your AWS credentials from
+`~/.aws/credentials` (or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`):
 
-## Current Deployment Status
+```
+  'my-new-bucket' is not yet registered as a Run:ai datasource.
+  Using AWS default profile (key: AKIAV44S...)
+  Create S3 datasource 'my-new-bucket' in Run:ai now? [Y/n]:
+  S3 endpoint URL [https://s3.amazonaws.com]:
+  Datasource 'my-new-bucket' created successfully.
+```
 
-**Deployed in us-west-2:**
-- API Gateway HTTP API → Lambda `s2r-converter` → Bedrock
-- Model: Claude Sonnet 4.6 (`us.anthropic.claude-sonnet-4-6` cross-region inference profile)
-- Rate Limit: 100 requests/IP/day (DynamoDB-backed)
-- Public endpoint, no AWS credentials required to use the client
+## Current deployment
 
-## Development
+| Resource | Value |
+|---|---|
+| Endpoint | AWS API Gateway HTTP API (`zzk4zf48pi`, us-west-2) |
+| Model | Claude Sonnet 4.6 (`us.anthropic.claude-sonnet-4-6`) |
+| Rate limit | 100 requests / IP / day |
+| Auth | HMAC-SHA256 (no AWS credentials required) |
 
-See [CLAUDE.md](https://github.com/dirkpetersen/slurm2runai/blob/main/CLAUDE.md) for development commands and quick reference.
-
-For detailed architecture and deployment information, see the [docs/](https://github.com/dirkpetersen/slurm2runai/tree/main/docs) directory.
-
-## Self-Hosting
-
-To deploy your own instance with API Gateway + Lambda:
+## Self-hosting
 
 ```bash
 git clone https://github.com/dirkpetersen/slurm2runai.git
 cd slurm2runai/lambda
-
-# Deploy with SAM (creates API Gateway, Lambda, DynamoDB)
-sam deploy --guided
-
-# Point your client at the new endpoint
-export S2R_API_ENDPOINT=https://<api-id>.execute-api.<region>.amazonaws.com/
+sam deploy --guided   # creates API Gateway + Lambda + DynamoDB
+# then set S2R_API_ENDPOINT to the output URL
 ```
 
-See [docs/deployment.md](https://github.com/dirkpetersen/slurm2runai/blob/main/docs/deployment.md) for full instructions.
+See [CLAUDE.md](https://github.com/dirkpetersen/slurm2runai/blob/main/CLAUDE.md)
+and [SETUP_JOURNEY.md](https://github.com/dirkpetersen/slurm2runai/blob/main/SETUP_JOURNEY.md)
+for full deployment and architecture details.
+
+## Examples
+
+See [examples/](https://github.com/dirkpetersen/slurm2runai/tree/main/examples)
+for reproduction-ready Run:ai job examples (GPU detection, R statistics, PyTorch training).
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/dirkpetersen/slurm2runai/blob/main/LICENSE) file for details.
-
-## Contributing
-
-Contributions welcome! Please:
-1. Open an issue to discuss changes
-2. Follow the code style (ruff)
-3. Add tests for new features
-4. Update documentation
+MIT — see [LICENSE](https://github.com/dirkpetersen/slurm2runai/blob/main/LICENSE)
