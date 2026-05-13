@@ -213,7 +213,7 @@ def _interactive_setup_inner() -> None:
 
     # Show what's already saved in the env file
     saved = load_env_file()
-    s2r_keys = ("RUNAI_PROJECT", "RUNAI_BUCKET", "RUNAI_CACHE", "RUNAI_AWS_PROFILE")
+    s2r_keys = ("RUNAI_PROJECT", "RUNAI_BUCKET", "RUNAI_CACHE", "RUNAI_AWS_PROFILE", "RUNAI_MODEL")
     saved_s2r = {k: saved[k] for k in s2r_keys if k in saved}
     if saved_s2r:
         print(f"Saved in {ENV_FILE}:", file=sys.stderr)
@@ -307,6 +307,18 @@ def _interactive_setup_inner() -> None:
     print("  Used when AWS_PROFILE is empty or 'default'; explicit AWS_PROFILE wins.", file=sys.stderr)
     aws_profile = _pick_aws_profile(default=already.get("RUNAI_AWS_PROFILE", ""))
 
+    # Model picker
+    print("", file=sys.stderr)
+    print("RUNAI_MODEL: which Claude model to use for conversion.", file=sys.stderr)
+    print("  sonnet (default) — Claude Sonnet 4.6, fast, fits within the API Gateway 30s timeout.", file=sys.stderr)
+    print("  opus            — Claude Opus 4.7, higher quality but may time out (503) on the", file=sys.stderr)
+    print("                    public endpoint due to API Gateway's 30s integration cap.", file=sys.stderr)
+    model_default = already.get("RUNAI_MODEL", "") or "sonnet"
+    model = _prompt("RUNAI_MODEL  (sonnet|opus)", model_default).strip().lower()
+    if model not in ("sonnet", "opus"):
+        print(f"  Invalid model '{model}', defaulting to sonnet.", file=sys.stderr)
+        model = "sonnet"
+
     values = {}
     if project:
         values["RUNAI_PROJECT"] = project
@@ -316,6 +328,8 @@ def _interactive_setup_inner() -> None:
         values["RUNAI_CACHE"] = cache
     if aws_profile:
         values["RUNAI_AWS_PROFILE"] = aws_profile
+    if model:
+        values["RUNAI_MODEL"] = model
 
     print("", file=sys.stderr)
     if not values:
@@ -357,6 +371,7 @@ def print_help() -> None:
     print("  RUNAI_BUCKET                      S3 bucket or s3://uri — mounted at /mnt/<name>", file=sys.stderr)
     print("  RUNAI_CACHE                       Datasource name for cache (default: cache)", file=sys.stderr)
     print("  RUNAI_AWS_PROFILE                 AWS profile for s2r (fallback if AWS_PROFILE is unset/default)", file=sys.stderr)
+    print("  RUNAI_MODEL                       Claude model: sonnet (default) or opus", file=sys.stderr)
     print("  AWS_PROFILE                       AWS profile for authentication", file=sys.stderr)
     print("  S2R_API_ENDPOINT                  Custom API endpoint URL", file=sys.stderr)
     print("  S2R_AWS_REGION                    AWS region (default: us-west-2)", file=sys.stderr)

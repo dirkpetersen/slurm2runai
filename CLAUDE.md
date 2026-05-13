@@ -78,7 +78,7 @@ sam deploy --guided
 - API Gateway HTTP API: `zzk4zf48pi` (us-west-2), auth: `NONE` (HMAC signature in app layer)
 - Public URL: `https://zzk4zf48pi.execute-api.us-west-2.amazonaws.com/`
 - Lambda: `s2r-converter` (still has a Function URL on `AWS_IAM`, but unused)
-- Model: `us.anthropic.claude-opus-4-7` (US cross-region inference profile)
+- Model: per-request via `X-S2R-Model` header (alias `sonnet`→4.6, `opus`→4.7); default `sonnet` (Opus may exceed API Gateway 30s integration timeout)
 - DynamoDB: `s2r-rate-limits` table, 1000 req/IP/day
 - Prompt produces **two fenced blocks** per response: ` ```yaml ` (TrainingWorkload CRD) + ` ```bash ` (CLI v2 shell script); `parse_response()` in `cli.py` splits them automatically
 

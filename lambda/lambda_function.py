@@ -25,9 +25,23 @@ from botocore.exceptions import ClientError
 
 # Configuration
 SHARED_SECRET = os.environ.get("SHARED_SECRET", "s2r-shared-secret-change-this-in-production")
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-opus-4-7")
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 MAX_REQUESTS_PER_IP_PER_DAY = int(os.environ.get("MAX_REQUESTS_PER_IP_PER_DAY", "100"))
 MAX_PAYLOAD_SIZE = 50 * 1024  # 50KB max
+
+# Whitelist of user-selectable models, keyed by short alias (X-S2R-Model header).
+# Aliases prevent the client from passing arbitrary Bedrock model IDs (cost/safety).
+MODEL_ALIASES = {
+    "sonnet": "us.anthropic.claude-sonnet-4-6",
+    "opus":   "us.anthropic.claude-opus-4-7",
+}
+
+
+def resolve_model(alias: str) -> str:
+    """Map a user-supplied alias to a Bedrock model ID, or fall back to the default."""
+    if alias and alias.lower() in MODEL_ALIASES:
+        return MODEL_ALIASES[alias.lower()]
+    return BEDROCK_MODEL_ID
 
 # AWS clients
 bedrock = boto3.client("bedrock-runtime")
@@ -324,9 +338,13 @@ Replace all <PLACEHOLDER> values with real values derived from the SLURM script.
 Output ONLY the two fenced code blocks."""
 
 
-def call_bedrock(slurm_script: str) -> str:
-    """Call AWS Bedrock to convert SLURM script to Run.ai config."""
+def call_bedrock(slurm_script: str, model_id: str = "") -> str:
+    """Call AWS Bedrock to convert SLURM script to Run.ai config.
+
+    model_id: explicit Bedrock model ID. If empty, uses BEDROCK_MODEL_ID env default.
+    """
     prompt = build_prompt(slurm_script)
+    chosen_model = model_id or BEDROCK_MODEL_ID
 
     request_body = {
         "anthropic_version": "bedrock-2023-05-31",
@@ -341,7 +359,7 @@ def call_bedrock(slurm_script: str) -> str:
 
     try:
         response = bedrock.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
+            modelId=chosen_model,
             body=json.dumps(request_body),
         )
         response_body = json.loads(response["body"].read())
@@ -397,6 +415,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 })
             }
 
+        # Resolve the model to use: client-supplied X-S2R-Model alias (sonnet|opus)
+        # → whitelist mapping → fallback to BEDROCK_MODEL_ID env default.
+        model_alias = headers.get("x-s2r-model", "")
+        chosen_model = resolve_model(model_alias)
+
         # Dry-run: return the assembled prompt without calling Bedrock.
         # No rate-limit charge for inspection.
         qs = event.get("queryStringParameters") or {}
@@ -406,12 +429,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "headers": {"Content-Type": "application/json"},
                 "body": json.dumps({
                     "prompt": build_prompt(body),
-                    "model": BEDROCK_MODEL_ID,
+                    "model": chosen_model,
                 }),
             }
 
         # Call Bedrock
-        runai_config = call_bedrock(body)
+        runai_config = call_bedrock(body, model_id=chosen_model)
 
         return {
             "statusCode": 200,

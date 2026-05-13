@@ -110,6 +110,7 @@ def convert_slurm_to_runai(
     use_iam_auth: Optional[bool] = None,
     aws_region: Optional[str] = None,
     dry_run: bool = False,
+    model: Optional[str] = None,
 ) -> str:
     """Convert a SLURM script to Run.ai configuration.
 
@@ -121,6 +122,8 @@ def convert_slurm_to_runai(
         aws_region: AWS region for SigV4 signing (defaults to S2R_AWS_REGION env var)
         dry_run: If True, return the assembled prompt the Lambda would send to Bedrock
             instead of the converted output. The Bedrock call is skipped.
+        model: Model alias to use ('sonnet' or 'opus'). Defaults to RUNAI_MODEL env var,
+            or 'sonnet' if unset. Sent as the X-S2R-Model header.
 
     Returns:
         Run.ai configuration (YAML or CLI commands), or the prompt text when dry_run=True.
@@ -140,12 +143,14 @@ def convert_slurm_to_runai(
         use_iam_auth = os.environ.get("S2R_USE_IAM_AUTH", "false").lower() in ("true", "1", "yes")
     iam_auth = use_iam_auth
     region = aws_region or os.environ.get("S2R_AWS_REGION", "us-west-2")
+    chosen_model = model or os.environ.get("RUNAI_MODEL", "sonnet")
 
     if dry_run:
         endpoint = endpoint.rstrip("/") + ("&" if "?" in endpoint else "?") + "dry_run=1"
 
     # Create signed request headers (HMAC signature for Lambda validation)
     headers = create_signed_headers(slurm_script)
+    headers["X-S2R-Model"] = chosen_model
 
     # Add AWS SigV4 signature if using IAM authentication
     if iam_auth:

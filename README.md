@@ -94,7 +94,7 @@ print(result)
    context into the SLURM script
 2. Signs the request with HMAC-SHA256 (no AWS credentials needed on the client)
 3. POSTs to an AWS API Gateway HTTP endpoint
-4. A Lambda behind the API calls Bedrock (Claude Opus 4.7) to convert the script
+4. A Lambda behind the API calls Bedrock (Claude Sonnet 4.6 by default; opt into Opus 4.7 via `RUNAI_MODEL=opus`) to convert the script
 5. Returns two fenced blocks: a `TrainingWorkload` YAML manifest + a `runai` shell script
 
 ## Configuration
@@ -109,6 +109,8 @@ Shell environment variables always take precedence.
 | `RUNAI_PROJECT` | Fills `--project` and `namespace: runai-<PROJECT>` in output |
 | `RUNAI_BUCKET` | S3 datasource name or `s3://uri` — mounted at `/mnt/<name>` |
 | `RUNAI_CACHE` | HostPath datasource name for cache (e.g. `cache`) |
+| `RUNAI_AWS_PROFILE` | AWS profile (fallback when `AWS_PROFILE` is unset/`default`) |
+| `RUNAI_MODEL` | Claude model: `sonnet` (default) or `opus`. Opus produces higher quality output but may exceed the 30s API Gateway timeout. |
 
 ### Other environment variables
 
@@ -156,7 +158,7 @@ wizard offers to create it automatically using your AWS credentials from
 | Resource | Value |
 |---|---|
 | Endpoint | AWS API Gateway HTTP API (`zzk4zf48pi`, us-west-2) |
-| Model | Claude Opus 4.7 (`us.anthropic.claude-opus-4-7`) |
+| Model | Sonnet 4.6 default (`RUNAI_MODEL=sonnet`); Opus 4.7 opt-in (`RUNAI_MODEL=opus`) |
 | Rate limit | 1000 requests / IP / day |
 | Auth | HMAC-SHA256 (no AWS credentials required) |
 
