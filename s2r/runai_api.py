@@ -124,6 +124,39 @@ def _project_meta(base_url: str, token: str, project_name: str) -> Tuple[int, st
     raise RunaiAPIError(f"Project '{project_name}' not found via /api/v1/org-unit/projects")
 
 
+def get_aws_region(profile: str = "") -> str:
+    """Return the AWS region from the standard chain.
+
+    Order: AWS_REGION → AWS_DEFAULT_REGION env vars → explicit profile arg
+    → AWS_PROFILE env var → 'default' profile in ~/.aws/config.
+    Returns empty string if nothing is configured (caller should fall back).
+    """
+    region = os.environ.get("AWS_REGION", "") or os.environ.get("AWS_DEFAULT_REGION", "")
+    if region:
+        return region
+
+    config_file = Path.home() / ".aws" / "config"
+    if not config_file.is_file():
+        return ""
+
+    c = configparser.ConfigParser()
+    c.read(config_file)
+    chosen = profile or os.environ.get("AWS_PROFILE", "") or "default"
+    # In ~/.aws/config, non-default profiles are named "profile <name>"
+    section = chosen if chosen == "default" else f"profile {chosen}"
+    if section in c:
+        return c[section].get("region", "")
+    return ""
+
+
+def s3_endpoint_url(profile: str = "") -> str:
+    """Return the S3 endpoint URL for the configured AWS region."""
+    region = get_aws_region(profile)
+    if region:
+        return f"https://s3.{region}.amazonaws.com"
+    return "https://s3.amazonaws.com"
+
+
 def get_aws_credentials(profile: str = "") -> Tuple[str, str]:
     """Return (access_key_id, secret_access_key) from the standard AWS credential chain.
 
@@ -185,13 +218,16 @@ def datasource_exists(bucket_name: str, project_name: str) -> bool:
 def create_s3_datasource(
     bucket_name: str,
     project_name: str,
-    s3_url: str = "https://s3.amazonaws.com",
-    bucket_path: str = "/",
+    s3_url: str = "",
+    bucket_path: str = "",
     aws_profile: str = "",
 ) -> str:
     """Create an S3 credential + datasource in Run:ai. Returns the datasource name.
 
     AWS credentials are read from the standard chain (env vars → aws_profile → default).
+    If s3_url is empty, defaults to https://s3.<region>.amazonaws.com using the
+    profile's configured region (avoids cross-region 301 redirects in goofys).
+    If bucket_path is empty, defaults to /mnt/<bucket-name> (the container mount).
     Raises RunaiAPIError on failure.
     """
     if "/" in bucket_name or not bucket_name:
@@ -199,6 +235,11 @@ def create_s3_datasource(
             f"Invalid bucket name {bucket_name!r}: must not contain '/'. "
             "Pass the bare bucket name (not s3://uri or path)."
         )
+
+    if not s3_url:
+        s3_url = s3_endpoint_url(aws_profile)
+    if not bucket_path:
+        bucket_path = f"/mnt/{bucket_name}"
 
     access_key_id, secret_access_key = get_aws_credentials(aws_profile)
     token = _token()

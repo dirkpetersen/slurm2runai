@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=gpu_test
+#SBATCH --partition=cqls_gpu-1080
+#SBATCH --account=cqls
+#SBATCH --gres=gpu:1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=00:10:00
+#SBATCH --chdir=/home/pi/peterdir/git/runai-demo
+#SBATCH --output=%j_gpu_test.out
+#SBATCH --error=%j_gpu_test.err
+
+singularity exec --nv /home/pi/peterdir/sif/pytorch.sif python /home/pi/peterdir/git/runai-demo/show_devices.py
+~
+~

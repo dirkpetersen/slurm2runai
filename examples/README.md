@@ -145,33 +145,27 @@ YAML manifest + CLI shell script.
 pip install s2r
 ```
 
-**Convert the PyTorch training example:**
+**Convert and view the runai command:**
 ```bash
 s2r examples/example_slurm.sh
-# Writes: example_slurm.yaml  (TrainingWorkload CRD)
-#         example_slurm.sh    (runai CLI shell script — shown on stdout)
+# Prints the equivalent 'runai training standard submit ...' shell script to stdout
 ```
 
-**Review and edit the generated files**, then submit:
+**Convert and submit in one step:**
 ```bash
-# Option A — YAML manifest
-runai workload submit --file example_slurm.yaml --project osu-default
-
-# Option B — shell script
-bash example_slurm.sh
+s2r examples/example_slurm.sh | bash
 ```
 
-**Convert the R example:**
-```bash
-s2r examples/r_calculation.slurm
-# Writes: r_calculation.yaml
-#         r_calculation.sh
-```
-
-**Pipe a script directly (no file output):**
+**Pipe from stdin:**
 ```bash
 cat examples/example_slurm.sh | s2r
 ```
+
+> **Note:** YAML manifest output (`runai workload submit --file`) is not yet
+> implemented. Run:ai 2.25 only accepts standard Kubernetes/Kubeflow kinds
+> (`Job`, `PyTorchJob`, `MPIJob`, etc.) via that path — the internal
+> `TrainingWorkload v2alpha1` CRD that the imperative CLI uses cannot be
+> submitted as a YAML file. s2r currently emits the imperative CLI form only.
 
 ---
 

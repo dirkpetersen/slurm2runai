@@ -147,18 +147,22 @@ spec:
 ```bash
 #!/usr/bin/env bash
 # Run:ai equivalent of the SLURM script above.
-# Usage: bash <job-name>.sh
+# Pipe-safe: 's2r job.slurm | bash' submits directly. Re-running gets a fresh
+# unique workload name via --name-prefix (Run:ai appends an index suffix).
 # Set PROJECT before running: export RUNAI_PROJECT=your-project
 set -euo pipefail
 
 PROJECT="${{RUNAI_PROJECT:-your-project}}"
-JOB=<job-name>
+JOB_PREFIX=<job-name>
 
 # Use whole GPU (--gpu-devices-request) or fractional (--gpu-portion-request 0.5).
 # Repeat --environment-variable for each env var.
 # Include --s3 only if RUNAI_BUCKET is in the s2r context.
 # Include --datasource only if RUNAI_CACHE is in the s2r context.
-runai training standard submit "$JOB" \\
+# --name-prefix lets Run:ai auto-increment the suffix (job-name-1, job-name-2, ...)
+# so re-submitting the same script does NOT collide with an existing workload.
+SUBMIT_OUTPUT=$(runai training standard submit \\
+  --name-prefix "$JOB_PREFIX" \\
   --project "$PROJECT" \\
   --image <IMAGE> \\
   --image-pull-policy IfNotPresent \\
@@ -167,16 +171,33 @@ runai training standard submit "$JOB" \\
   --cpu-memory-request <NM or NG> \\
   --working-dir <working-directory> \\
   --environment-variable KEY=VALUE \\
-  --s3 name=<RUNAI_BUCKET_NAME>,bucket=<RUNAI_BUCKET_NAME>,path=<RUNAI_BUCKET_MOUNT> \\
+  --datasource type=s3,name=<RUNAI_BUCKET_NAME> \\
   --datasource type=hostPath,name=<RUNAI_CACHE> \\
   --preemptibility preemptible \\
   --priority low \\
   --auto-deletion-time-after-completion 24h \\
-  --command -- <full command and args>
+  --command -- <full command and args> 2>&1)
+
+# Print runai output but suppress its built-in tracking hint (it omits --project).
+echo "$SUBMIT_OUTPUT" | grep -v "To track the workload's status"
+
+JOB_NAME=$(echo "$SUBMIT_OUTPUT" | grep -oE "${{JOB_PREFIX}}-[a-f0-9]+" | head -1)
+if [[ -n "$JOB_NAME" ]]; then
+  echo
+  echo "To track the workload's status, run:"
+  echo
+  echo "runai training standard describe $JOB_NAME -p $PROJECT"
+fi
 ```
 
+CRITICAL: Emit the trailing block EXACTLY as shown above — do NOT add extra commands
+(no logs/list/delete hints), do NOT change "To track the workload's status, run:" wording,
+and do NOT add a "Monitor your job with:" header. Only the single 'describe' line.
+
 SLURM → Run:ai mapping rules:
-- --job-name          → metadata.name and JOB variable (lowercase, hyphens)
+- --job-name          → metadata.name (YAML) and --name-prefix (CLI). Use --name-prefix
+                        instead of a positional name so Run:ai auto-appends an index suffix
+                        and re-submitting the same script never collides.
 - --gres=gpu:N        → gpuDevicesRequest: N  (--gpu-devices-request N in CLI)
 - --gres=gpu:0.N      → gpuPortionRequest: 0.N (--gpu-portion-request 0.N in CLI)
 - --cpus-per-task=N   → cpuCoreRequest: N  (--cpu-core-request N)
@@ -187,16 +208,66 @@ SLURM → Run:ai mapping rules:
 - export VAR=VAL      → environment.items / --environment-variable VAR=VAL
 - module load         → omit (bake into container image)
 - #SBATCH --array     → omit with a comment that job arrays need --runs N in Run:ai
-- RUNAI_BUCKET_NAME   → storage.s3.instances[].bucket and --s3 bucket= (mount at RUNAI_BUCKET_MOUNT)
-- RUNAI_BUCKET_MOUNT  → storage.s3.instances[].path and --s3 path= (default: /mnt/<bucket-name>)
+- RUNAI_BUCKET_NAME   → CLI: --datasource type=s3,name=<RUNAI_BUCKET_NAME>   (uses pre-registered credentials)
+                        YAML: storage.s3.instances[].bucket
+                        DO NOT use the inline --s3 flag — it has no credentials and silently mounts empty.
+- RUNAI_BUCKET_MOUNT  → storage.s3.instances[].path  (mount path baked into the datasource definition)
 - RUNAI_CACHE         → --datasource type=hostPath,name=<value>  (pre-defined cluster datasource, mount path is baked in)
-- If RUNAI_BUCKET is NOT set in the context header, omit the storage.s3 block and --s3 flag entirely.
-- If RUNAI_CACHE is NOT set in the context header, omit the --datasource flag entirely.
+- If RUNAI_BUCKET is NOT set in the context header, omit the storage.s3 block and --datasource type=s3 flag entirely.
+- If RUNAI_CACHE is NOT set in the context header, omit the --datasource type=hostPath flag entirely.
+
+Path remapping rule (CRITICAL):
+- When --chdir or any path in the SLURM script is under a user home directory (e.g. /home/<user>/...),
+  remap that prefix to RUNAI_BUCKET_MOUNT for ALL occurrences — not just --working-dir.
+- This includes:
+  - paths inside `--command --` (the actual script path: e.g. /home/pi/peterdir/git/runai-demo/show_devices.py
+    becomes /mnt/<bucket-name>/git/runai-demo/show_devices.py)
+  - paths inside `singularity exec` arguments
+  - paths inside any heredoc, environment variable, or shell substitution
+- Strip Singularity wrappers: `singularity exec [--nv] <image>.sif <cmd> <args>` becomes just `<cmd> <args>`,
+  with the SIF image replaced by an equivalent OCI image set via --image. Apply path remapping to <cmd> <args>.
+- The remapping prefix must be consistent: the SLURM home dir prefix → RUNAI_BUCKET_MOUNT, preserving the
+  trailing path. So /home/pi/peterdir/git/X under bucket mount /mnt/runai-peterdir → /mnt/runai-peterdir/git/X.
+  The SLURM "user dir" segment is dropped because the bucket itself is the user's data root.
 
 If the script has no explicit container image, use a sensible default based on
 the workload (e.g. nvcr.io/nvidia/pytorch:25.06-py3 for PyTorch/CUDA work,
-nvcr.io/nvidia/tensorflow:25.03-tf2-py3 for TensorFlow, ubuntu:22.04 otherwise)
-and add a comment telling the user to replace it.
+nvcr.io/nvidia/tensorflow:25.03-tf2-py3 for TensorFlow, rocker/r-base:4.6.0 for
+R, ubuntu:22.04 otherwise) and add a brief comment telling the user to replace it.
+
+Container/dependency rule (IMPORTANT — avoid bash setup boilerplate when possible):
+
+1. First, decide which container image you would pick (per the rules above).
+2. Then check whether all tools the script invokes are ALREADY available in that
+   image's standard install. The well-known images cover their core stack:
+     - nvcr.io/nvidia/pytorch:*    → python3, pip, torch, torchvision, torchaudio, CUDA, cuDNN
+     - nvcr.io/nvidia/tensorflow:* → python3, pip, tensorflow, CUDA
+     - rocker/r-base:*             → R, Rscript
+     - rocker/tidyverse:*          → R + tidyverse
+     - ubuntu:22.04                → bash only — NO python, NO R, NO compilers
+   If every tool the script needs is in the chosen image, run the user's command
+   DIRECTLY via `--command --` with no venv setup, no pip install, no bash -c
+   wrapper. Do NOT add unnecessary pip/apt/venv steps.
+
+3. ONLY when the chosen image is missing a needed package (e.g. ubuntu:22.04 with
+   a python script, or rocker/r-base with a niche CRAN package), wrap the command
+   in a small `bash -c` block that creates a persistent venv on the S3/cache mount
+   so re-runs are fast. Example pattern (replace VENV path, packages, and entrypoint):
+
+     --environment-variable VENV=<RUNAI_BUCKET_MOUNT>/venv/<name> \\
+     --command -- bash -c '
+       VENV=<RUNAI_BUCKET_MOUNT>/venv/<name>
+       if [ ! -d "$VENV" ]; then
+         python3 -m venv "$VENV"
+       fi
+       source "$VENV/bin/activate"
+       pip install --quiet <packages>
+       <user-entrypoint>
+     '
+
+   Use this only when actually needed — never as a default. The reuse path
+   (RUNAI_BUCKET_MOUNT/venv/<name>) makes the first run slow but subsequent
+   runs near-instant.
 
 Replace all <PLACEHOLDER> values with real values derived from the SLURM script.
 Output ONLY the two fenced code blocks."""

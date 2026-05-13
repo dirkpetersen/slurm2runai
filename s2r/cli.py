@@ -16,6 +16,8 @@ from s2r.runai_api import (
     RunaiAPIError,
     create_s3_datasource,
     get_aws_credentials,
+    get_aws_region,
+    s3_endpoint_url,
 )
 
 VERBOSE = os.environ.get("S2R_VERBOSE", "").lower() in ("1", "true", "yes")
@@ -240,7 +242,14 @@ def _interactive_setup_inner() -> None:
             cred_hint = f"no AWS credentials found ({e})"
         print(f"  Using {cred_hint}", file=sys.stderr)
         if _yn(f"  Create S3 datasource '{bucket}' in Run:ai now?"):
-            s3_url = _prompt("  S3 endpoint URL", "https://s3.amazonaws.com")
+            region = get_aws_region(aws_profile)
+            default_url = s3_endpoint_url(aws_profile)
+            if region:
+                print(f"  Detected AWS region: {region}", file=sys.stderr)
+            else:
+                print("  No AWS region configured — bucket may be in a different region than the endpoint.",
+                      file=sys.stderr)
+            s3_url = _prompt("  S3 endpoint URL", default_url)
             try:
                 create_s3_datasource(
                     bucket_name=bucket,
@@ -286,16 +295,15 @@ def print_help() -> None:
     print("s2r - Convert SLURM scripts to Run.ai configurations using AI", file=sys.stderr)
     print("", file=sys.stderr)
     print("Usage:", file=sys.stderr)
-    print("  s2r <input_file>                  Convert and save YAML, print CLI to stdout", file=sys.stderr)
-    print("  s2r <input_file> <output.yaml>    Convert and save YAML only", file=sys.stderr)
-    print("  s2r < script.sh                   Read from stdin, print CLI to stdout", file=sys.stderr)
-    print("  cat script.sh | s2r               Read from stdin, print CLI to stdout", file=sys.stderr)
+    print("  s2r <input_file>                  Convert SLURM script, print runai command to stdout", file=sys.stderr)
+    print("  s2r < script.sh                   Read from stdin, print runai command to stdout", file=sys.stderr)
+    print("  cat script.sh | s2r               Read from stdin, print runai command to stdout", file=sys.stderr)
+    print("  s2r job.slurm | bash              Convert and submit to Run:ai in one step", file=sys.stderr)
     print("  s2r --config                      Setup wizard: detect and save env to ~/.runai/runai.env", file=sys.stderr)
     print("", file=sys.stderr)
-    print("Examples:", file=sys.stderr)
-    print("  s2r job.slurm                     Writes job.yaml, prints runai command", file=sys.stderr)
-    print("  s2r job.slurm output.yaml         Writes output.yaml only", file=sys.stderr)
-    print("  s2r < job.slurm                   Prints runai command to stdout", file=sys.stderr)
+    print("Note: YAML manifest output ('runai workload submit --file') is not yet implemented.", file=sys.stderr)
+    print("      Run:ai 2.25 only accepts standard K8s/Kubeflow kinds (Job, PyTorchJob, etc.)", file=sys.stderr)
+    print("      via that path; the imperative 'runai training standard submit' CLI is used instead.", file=sys.stderr)
     print("", file=sys.stderr)
     print("Configuration:", file=sys.stderr)
     print("  ~/.runai/runai.env                Persistent config file (auto-loaded on every run)", file=sys.stderr)
@@ -313,7 +321,17 @@ def print_help() -> None:
 
 
 def main() -> None:
-    """Main CLI entry point."""
+    """Main CLI entry point. Wraps the implementation to catch Ctrl-C cleanly."""
+    try:
+        _main_impl()
+    except KeyboardInterrupt:
+        # Stop the spinner if it's still running, then exit silently
+        sys.stderr.write("\r" + " " * 60 + "\r")
+        sys.stderr.write("Interrupted.\n")
+        sys.exit(130)
+
+
+def _main_impl() -> None:
     args = sys.argv[1:]
 
     # Check for help flag
@@ -328,7 +346,6 @@ def main() -> None:
 
     # Determine input source
     input_file: Optional[str] = None
-    output_file: Optional[str] = None
 
     if len(args) == 0:
         # Check if stdin is a TTY (interactive terminal)
@@ -342,22 +359,14 @@ def main() -> None:
         # Read from stdin (piped input)
         input_source = "stdin"
     elif len(args) == 1:
-        # Read from file, write to stdout
+        # Read from file, print runai CLI command to stdout (pipe-safe to bash)
         input_file = args[0]
-        input_source = "file"
-    elif len(args) == 2:
-        # Read from file, write to YAML file
-        input_file = args[0]
-        output_file = args[1]
-        if not output_file.lower().endswith((".yaml", ".yml")):
-            print("Error: Output file must have a .yaml or .yml extension", file=sys.stderr)
-            sys.exit(1)
         input_source = "file"
     else:
-        print("Usage: s2r [input_file] [output.yaml]", file=sys.stderr)
-        print("  No args: read from stdin, print CLI command to stdout", file=sys.stderr)
-        print("  One arg: save YAML file, print CLI command to stdout", file=sys.stderr)
-        print("  Two args: save YAML file only (output must be .yaml/.yml)", file=sys.stderr)
+        print("Usage: s2r [input_file]", file=sys.stderr)
+        print("  No args: read from stdin, print runai command to stdout", file=sys.stderr)
+        print("  One arg: read file, print runai command to stdout", file=sys.stderr)
+        print("  Pipe to bash to execute: s2r job.slurm | bash", file=sys.stderr)
         sys.exit(1)
 
     # Read input
@@ -402,35 +411,16 @@ def main() -> None:
     # Parse response into YAML and CLI sections
     yaml_content, cli_command = parse_response(runai_config)
 
-    # Write output based on mode
+    # Print the runai CLI shell script to stdout — pipe-safe to bash.
+    # Note: YAML manifest output via 'runai workload submit --file' is not yet
+    # implemented (the TrainingWorkload v2alpha1 CRD is not accepted via that path
+    # on Run:ai 2.25; it requires standard K8s/Kubeflow kinds like Job, PyTorchJob, etc.).
     try:
-        if input_source == "stdin":
-            # stdin: print CLI command to stdout only (no file)
-            if cli_command:
-                print(cli_command)
-            elif yaml_content:
-                print(yaml_content)
-
-        elif output_file:
-            # Two args with .yaml/.yml extension: write YAML file only, no stdout
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(yaml_content or runai_config)
-            print(f"Run.ai configuration written to: {output_file}", file=sys.stderr)
-
+        if cli_command:
+            print(cli_command)
         else:
-            # One arg: auto-generate .yaml file from input name + print CLI to stdout
-            base = os.path.splitext(input_file)[0]
-            yaml_file = base + ".yaml"
-            if yaml_content:
-                with open(yaml_file, "w", encoding="utf-8") as f:
-                    f.write(yaml_content)
-                print(f"Run.ai configuration written to: {yaml_file}", file=sys.stderr)
-            if cli_command:
-                print(cli_command)
-            elif not yaml_content:
-                # Fallback: no parsed sections, print raw response
-                print(runai_config)
-
+            # Fallback: model returned no fenced bash block — print whatever we got
+            print(runai_config)
     except Exception as e:
         print(f"Error writing output: {e}", file=sys.stderr)
         sys.exit(1)
