@@ -15,8 +15,10 @@ from s2r.env import load_env_file, write_env_file, ENV_FILE
 from s2r.runai_api import (
     RunaiAPIError,
     create_s3_datasource,
+    effective_aws_profile,
     get_aws_credentials,
     get_aws_region,
+    list_aws_profiles,
     s3_endpoint_url,
 )
 
@@ -167,6 +169,34 @@ def _yn(question: str) -> bool:
     return answer in ("y", "yes", "")
 
 
+def _pick_aws_profile(default: str = "") -> str:
+    """Show available AWS profiles and let the user pick one. Empty string skips."""
+    profiles = list_aws_profiles()
+    if not profiles:
+        print("  No AWS profiles found in ~/.aws/credentials or ~/.aws/config.", file=sys.stderr)
+        return ""
+    print("  Available AWS profiles:", file=sys.stderr)
+    for i, name in enumerate(profiles, 1):
+        marker = "  *" if name == default else "   "
+        print(f"  {marker}{i}. {name}", file=sys.stderr)
+    answer = _prompt(
+        "  Pick a profile by number or name (blank to skip)",
+        default=default,
+    )
+    if not answer:
+        return ""
+    if answer.isdigit():
+        idx = int(answer) - 1
+        if 0 <= idx < len(profiles):
+            return profiles[idx]
+        print(f"  Invalid index {answer}; skipping.", file=sys.stderr)
+        return ""
+    if answer in profiles:
+        return answer
+    print(f"  Profile '{answer}' not found; skipping.", file=sys.stderr)
+    return ""
+
+
 def _interactive_setup() -> None:
     """Setup wizard: offer to configure env vars and save to ~/.runai/runai.env."""
     try:
@@ -183,7 +213,7 @@ def _interactive_setup_inner() -> None:
 
     # Show what's already saved in the env file
     saved = load_env_file()
-    s2r_keys = ("RUNAI_PROJECT", "RUNAI_BUCKET", "RUNAI_CACHE")
+    s2r_keys = ("RUNAI_PROJECT", "RUNAI_BUCKET", "RUNAI_CACHE", "RUNAI_AWS_PROFILE")
     saved_s2r = {k: saved[k] for k in s2r_keys if k in saved}
     if saved_s2r:
         print(f"Saved in {ENV_FILE}:", file=sys.stderr)
@@ -224,26 +254,30 @@ def _interactive_setup_inner() -> None:
     hostpaths = [name for name, dtype in datasources if "hostpath" in dtype.lower()]
 
     project = _prompt("RUNAI_PROJECT", detected.get("project") or already.get("RUNAI_PROJECT", ""))
-    bucket  = _prompt("RUNAI_BUCKET  (optional, S3 datasource name or s3://uri)",
-                      already.get("RUNAI_BUCKET", "") or (s3s[0] if s3s else ""))
+
+    cache_default = already.get("RUNAI_CACHE", "") or (hostpaths[0] if hostpaths else "cache")
+    cache = _prompt("RUNAI_CACHE  (datasource name for cache)", cache_default)
+
+    bucket = _prompt("RUNAI_BUCKET  (optional, S3 datasource name or s3://uri)",
+                     already.get("RUNAI_BUCKET", "") or (s3s[0] if s3s else ""))
 
     # Offer to create the S3 datasource if it doesn't exist yet
     if bucket and project and bucket not in s3s:
         print("", file=sys.stderr)
         print(f"  '{bucket}' is not yet registered as a Run:ai datasource.", file=sys.stderr)
-        aws_profile = os.environ.get("AWS_PROFILE", "")
+        aws_profile_for_create = effective_aws_profile()
         try:
-            ak, _ = get_aws_credentials(aws_profile)
+            ak, _ = get_aws_credentials(aws_profile_for_create)
             cred_hint = (
-                f"AWS profile '{aws_profile}'" if aws_profile
+                f"AWS profile '{aws_profile_for_create}'" if aws_profile_for_create
                 else f"AWS default profile (key: {ak[:8]}...)"
             )
         except RunaiAPIError as e:
             cred_hint = f"no AWS credentials found ({e})"
         print(f"  Using {cred_hint}", file=sys.stderr)
         if _yn(f"  Create S3 datasource '{bucket}' in Run:ai now?"):
-            region = get_aws_region(aws_profile)
-            default_url = s3_endpoint_url(aws_profile)
+            region = get_aws_region(aws_profile_for_create)
+            default_url = s3_endpoint_url(aws_profile_for_create)
             if region:
                 print(f"  Detected AWS region: {region}", file=sys.stderr)
             else:
@@ -255,7 +289,7 @@ def _interactive_setup_inner() -> None:
                     bucket_name=bucket,
                     project_name=project,
                     s3_url=s3_url,
-                    aws_profile=aws_profile,
+                    aws_profile=aws_profile_for_create,
                 )
                 print(f"  Datasource '{bucket}' created successfully.", file=sys.stderr)
                 # Refresh local view so subsequent logic knows it now exists
@@ -265,8 +299,13 @@ def _interactive_setup_inner() -> None:
                 print("  You can create it manually in the Run:ai UI.", file=sys.stderr)
         print("", file=sys.stderr)
 
-    cache_default = already.get("RUNAI_CACHE", "") or (hostpaths[0] if hostpaths else "cache")
-    cache = _prompt("RUNAI_CACHE  (datasource name for cache)", cache_default)
+    # AWS profile — used as a fallback when shell AWS_PROFILE is empty or 'default'.
+    # Drives both: (a) which credentials s2r uses to create the S3 datasource,
+    # (b) which --profile flag the generated 'aws s3 sync' upload comment uses.
+    print("", file=sys.stderr)
+    print("RUNAI_AWS_PROFILE: AWS profile for s2r operations (S3 datasource + upload hints).", file=sys.stderr)
+    print("  Used when AWS_PROFILE is empty or 'default'; explicit AWS_PROFILE wins.", file=sys.stderr)
+    aws_profile = _pick_aws_profile(default=already.get("RUNAI_AWS_PROFILE", ""))
 
     values = {}
     if project:
@@ -275,6 +314,8 @@ def _interactive_setup_inner() -> None:
         values["RUNAI_BUCKET"] = bucket
     if cache:
         values["RUNAI_CACHE"] = cache
+    if aws_profile:
+        values["RUNAI_AWS_PROFILE"] = aws_profile
 
     print("", file=sys.stderr)
     if not values:
@@ -314,6 +355,7 @@ def print_help() -> None:
     print("  RUNAI_PROJECT                     Run:ai project (fills --project in output)", file=sys.stderr)
     print("  RUNAI_BUCKET                      S3 bucket or s3://uri — mounted at /mnt/<name>", file=sys.stderr)
     print("  RUNAI_CACHE                       Datasource name for cache (default: cache)", file=sys.stderr)
+    print("  RUNAI_AWS_PROFILE                 AWS profile for s2r (fallback if AWS_PROFILE is unset/default)", file=sys.stderr)
     print("  AWS_PROFILE                       AWS profile for authentication", file=sys.stderr)
     print("  S2R_API_ENDPOINT                  Custom API endpoint URL", file=sys.stderr)
     print("  S2R_AWS_REGION                    AWS region (default: us-west-2)", file=sys.stderr)

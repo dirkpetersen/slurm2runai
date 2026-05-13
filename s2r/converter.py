@@ -28,6 +28,18 @@ def _inject_context(slurm_script: str) -> str:
     bucket  = os.environ.get("RUNAI_BUCKET", "")
     cache   = os.environ.get("RUNAI_CACHE", "")
 
+    # Resolve the effective AWS profile: shell AWS_PROFILE wins unless empty/'default',
+    # then RUNAI_AWS_PROFILE is used. We compute it here (rather than passing through)
+    # so the Lambda prompt sees a single, unambiguous value.
+    shell_profile = os.environ.get("AWS_PROFILE", "")
+    runai_profile = os.environ.get("RUNAI_AWS_PROFILE", "")
+    if shell_profile and shell_profile != "default":
+        aws_profile = shell_profile
+    elif runai_profile:
+        aws_profile = runai_profile
+    else:
+        aws_profile = shell_profile  # may be "" or "default"
+
     lines = []
     if project:
         lines.append(f"# RUNAI_PROJECT: {project}")
@@ -38,6 +50,8 @@ def _inject_context(slurm_script: str) -> str:
         lines.append(f"# RUNAI_BUCKET_MOUNT: /mnt/{bname}")
     if cache:
         lines.append(f"# RUNAI_CACHE: {cache}")
+    if aws_profile:
+        lines.append(f"# RUNAI_AWS_PROFILE: {aws_profile}")
     if not lines:
         return slurm_script
     header = "# --- s2r context (use these values in the output) ---\n"

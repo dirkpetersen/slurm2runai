@@ -155,10 +155,23 @@ set -euo pipefail
 PROJECT="${{RUNAI_PROJECT:-your-project}}"
 JOB_PREFIX=<job-name>
 
+# ---------------------------------------------------------------
+# Before submitting, upload your code/data to the S3 bucket so the
+# container can find it under the bucket mount. The bucket mirrors
+# your laptop's absolute paths 1:1 — the same path structure under
+# /home/... appears under <RUNAI_BUCKET_MOUNT>/home/... inside the
+# container. Run this from your laptop:
+#
+#   aws s3 sync <ABS-LOCAL-DIR> s3://<RUNAI_BUCKET_NAME><ABS-LOCAL-DIR> [--profile <RUNAI_AWS_PROFILE>]
+#
+# Where <ABS-LOCAL-DIR> is the absolute SLURM --chdir directory.
+# (--profile is included only if RUNAI_AWS_PROFILE is in the s2r context.)
+# ---------------------------------------------------------------
+
 # Use whole GPU (--gpu-devices-request) or fractional (--gpu-portion-request 0.5).
 # Repeat --environment-variable for each env var.
-# Include --s3 only if RUNAI_BUCKET is in the s2r context.
-# Include --datasource only if RUNAI_CACHE is in the s2r context.
+# Include --datasource type=s3 only if RUNAI_BUCKET is in the s2r context.
+# Include --datasource type=hostPath only if RUNAI_CACHE is in the s2r context.
 # --name-prefix lets Run:ai auto-increment the suffix (job-name-1, job-name-2, ...)
 # so re-submitting the same script does NOT collide with an existing workload.
 SUBMIT_OUTPUT=$(runai training standard submit \\
@@ -216,19 +229,48 @@ SLURM → Run:ai mapping rules:
 - If RUNAI_BUCKET is NOT set in the context header, omit the storage.s3 block and --datasource type=s3 flag entirely.
 - If RUNAI_CACHE is NOT set in the context header, omit the --datasource type=hostPath flag entirely.
 
+Path mirroring convention (CRITICAL — applies to BOTH upload hint and in-container paths):
+
+The S3 bucket mirrors the laptop's absolute filesystem layout 1:1. A local
+absolute path /A/B/C maps to:
+    s3://<bucket>/A/B/C        (object key on S3)
+    <RUNAI_BUCKET_MOUNT>/A/B/C (path inside the container)
+
+Do NOT strip the user/home prefix. Do NOT collapse path segments. Just prepend
+<RUNAI_BUCKET_MOUNT> to the original absolute path. This makes upload commands
+and in-container paths trivially predictable.
+
+Concrete example:
+    SLURM --chdir = /home/pi/peterdir/git/runai-demo
+    Bucket        = runai-peterdir   (mount: /mnt/runai-peterdir)
+
+    Upload command (in the comment block):
+        aws s3 sync /home/pi/peterdir/git/runai-demo \\
+                    s3://runai-peterdir/home/pi/peterdir/git/runai-demo
+    In-container --working-dir:
+        /mnt/runai-peterdir/home/pi/peterdir/git/runai-demo
+    Script path inside --command:
+        /mnt/runai-peterdir/home/pi/peterdir/git/runai-demo/show_devices.py
+
+Upload-hint rule (when generating the comment block before the runai command):
+- ALWAYS emit a concrete `aws s3 sync <ABS-LOCAL-DIR> s3://<bucket><ABS-LOCAL-DIR>` line.
+  The S3 prefix is the bucket name immediately followed by the SAME absolute path
+  (no segments dropped, no rewriting).
+- <ABS-LOCAL-DIR> = #SBATCH --chdir if present, else the directory containing the
+  entrypoint script. Always an absolute path.
+- If RUNAI_AWS_PROFILE is in the s2r context, append `--profile <RUNAI_AWS_PROFILE>`.
+- The upload comment must remain a COMMENT (each line starts with #). Never run
+  aws s3 inside the generated bash — the user copies and runs it themselves.
+- If RUNAI_BUCKET is NOT in the context (no S3 mount), omit the upload comment block.
+
 Path remapping rule (CRITICAL):
-- When --chdir or any path in the SLURM script is under a user home directory (e.g. /home/<user>/...),
-  remap that prefix to RUNAI_BUCKET_MOUNT for ALL occurrences — not just --working-dir.
-- This includes:
-  - paths inside `--command --` (the actual script path: e.g. /home/pi/peterdir/git/runai-demo/show_devices.py
-    becomes /mnt/<bucket-name>/git/runai-demo/show_devices.py)
-  - paths inside `singularity exec` arguments
-  - paths inside any heredoc, environment variable, or shell substitution
-- Strip Singularity wrappers: `singularity exec [--nv] <image>.sif <cmd> <args>` becomes just `<cmd> <args>`,
-  with the SIF image replaced by an equivalent OCI image set via --image. Apply path remapping to <cmd> <args>.
-- The remapping prefix must be consistent: the SLURM home dir prefix → RUNAI_BUCKET_MOUNT, preserving the
-  trailing path. So /home/pi/peterdir/git/X under bucket mount /mnt/runai-peterdir → /mnt/runai-peterdir/git/X.
-  The SLURM "user dir" segment is dropped because the bucket itself is the user's data root.
+- For EVERY absolute path in the SLURM script, prepend RUNAI_BUCKET_MOUNT.
+  Apply this to: --working-dir, paths inside `--command --`, paths inside
+  `singularity exec` arguments, paths inside heredocs, environment variables,
+  and any shell substitution.
+- Strip Singularity wrappers: `singularity exec [--nv] <image>.sif <cmd> <args>`
+  becomes just `<cmd> <args>` with the SIF image replaced by an equivalent OCI
+  image set via --image. Apply path mirroring to <cmd> <args>.
 
 If the script has no explicit container image, use a sensible default based on
 the workload (e.g. nvcr.io/nvidia/pytorch:25.06-py3 for PyTorch/CUDA work,

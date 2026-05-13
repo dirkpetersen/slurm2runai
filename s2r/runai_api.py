@@ -124,6 +124,43 @@ def _project_meta(base_url: str, token: str, project_name: str) -> Tuple[int, st
     raise RunaiAPIError(f"Project '{project_name}' not found via /api/v1/org-unit/projects")
 
 
+def list_aws_profiles() -> List[str]:
+    """Return the list of profile names defined in ~/.aws/credentials and ~/.aws/config."""
+    profiles: list = []
+    seen = set()
+    for path in (Path.home() / ".aws" / "credentials", Path.home() / ".aws" / "config"):
+        if not path.is_file():
+            continue
+        c = configparser.ConfigParser()
+        try:
+            c.read(path)
+        except configparser.Error:
+            continue
+        for section in c.sections():
+            # In ~/.aws/config, profiles are named "profile <name>"; in credentials they're bare.
+            name = section[len("profile "):] if section.startswith("profile ") else section
+            if name and name not in seen:
+                seen.add(name)
+                profiles.append(name)
+    return profiles
+
+
+def effective_aws_profile() -> str:
+    """Return the AWS profile s2r should use.
+
+    Rule: shell AWS_PROFILE wins UNLESS it is empty or 'default' — in which case
+    RUNAI_AWS_PROFILE is used (if set). This lets the user pin a Run:ai-specific
+    profile in runai.env without overriding an explicit AWS_PROFILE in their shell.
+    """
+    shell = os.environ.get("AWS_PROFILE", "")
+    if shell and shell != "default":
+        return shell
+    runai = os.environ.get("RUNAI_AWS_PROFILE", "")
+    if runai:
+        return runai
+    return shell  # may be "" or "default"
+
+
 def get_aws_region(profile: str = "") -> str:
     """Return the AWS region from the standard chain.
 
@@ -141,7 +178,7 @@ def get_aws_region(profile: str = "") -> str:
 
     c = configparser.ConfigParser()
     c.read(config_file)
-    chosen = profile or os.environ.get("AWS_PROFILE", "") or "default"
+    chosen = profile or effective_aws_profile() or "default"
     # In ~/.aws/config, non-default profiles are named "profile <name>"
     section = chosen if chosen == "default" else f"profile {chosen}"
     if section in c:
@@ -180,7 +217,7 @@ def get_aws_credentials(profile: str = "") -> Tuple[str, str]:
 
     c = configparser.ConfigParser()
     c.read(creds_file)
-    chosen = profile or os.environ.get("AWS_PROFILE", "") or "default"
+    chosen = profile or effective_aws_profile() or "default"
     if chosen not in c:
         available = ", ".join(c.sections()) or "(none)"
         raise RunaiAPIError(
