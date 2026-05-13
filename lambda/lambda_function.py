@@ -330,7 +330,10 @@ def call_bedrock(slurm_script: str) -> str:
 
     request_body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 4096,
+        # Output is typically ~1200-1500 tokens; cap at 2048 to keep p99
+        # latency under the API Gateway 30s integration timeout, especially
+        # on Opus 4.7 which is slower than Sonnet 4.6.
+        "max_tokens": 2048,
         "messages": [
             {"role": "user", "content": prompt},
         ],
