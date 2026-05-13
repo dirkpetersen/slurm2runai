@@ -2,5 +2,5 @@
 
 from s2r.converter import convert_slurm_to_runai, ConversionError
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 __all__ = ["convert_slurm_to_runai", "ConversionError"]

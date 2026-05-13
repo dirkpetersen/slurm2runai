@@ -152,8 +152,8 @@ User (pip install s2r)
            ▼
   Lambda: s2r-converter (us-west-2, python3.11, 512 MB)
            │  1. Verify HMAC signature (5-min replay window)
-           │  2. Rate limit: 100 req/IP/day (DynamoDB s2r-rate-limits)
-           │  3. Call Bedrock → us.anthropic.claude-sonnet-4-6
+           │  2. Rate limit: 1000 req/IP/day (DynamoDB s2r-rate-limits)
+           │  3. Call Bedrock → us.anthropic.claude-opus-4-7
            │
            ▼
   Response: {"runai_config": "```yaml\n...\n```\n```bash\n...\n```"}
@@ -165,14 +165,14 @@ User (pip install s2r)
 | API Gateway HTTP API | `zzk4zf48pi` | us-west-2 |
 | Lambda function | `s2r-converter` | us-west-2 |
 | DynamoDB table | `s2r-rate-limits` | us-west-2 |
-| Bedrock model | `us.anthropic.claude-sonnet-4-6` | us-west-2 |
+| Bedrock model | `us.anthropic.claude-opus-4-7` | us-west-2 |
 | Lambda IAM role | `DeleteUnusedVolumesRole` | us-west-2 |
 
 **Lambda environment variables:**
 ```
 SHARED_SECRET=s2r-shared-secret-change-this-in-production
-BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6
-MAX_REQUESTS_PER_IP_PER_DAY=100
+BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-7
+MAX_REQUESTS_PER_IP_PER_DAY=1000
 RATE_LIMIT_TABLE=s2r-rate-limits
 ```
 
@@ -378,6 +378,10 @@ sam deploy --guided
 | 0.3.0 | Switch to API Gateway (no more 403), Claude Sonnet 4.6 |
 | 0.3.1 | boto3 made optional (`pip install 's2r[iam-auth]'`) |
 | 0.3.2 | Prompt rewritten with exact Run:ai CRD schema and CLI v2 flags |
+| 0.4.0 | Setup wizard, persistent runai.env, S3 datasource auto-provisioning |
+| 0.4.1 | Pipe-to-bash output, region-aware S3, prompt fixes |
+| 0.4.2 | RUNAI_AWS_PROFILE, full-path bucket mirroring, wizard order |
+| 0.4.3 | --prompt flag (inspect Bedrock prompt), Claude Opus 4.7, 1000 req/IP/day |
 
 ---
 

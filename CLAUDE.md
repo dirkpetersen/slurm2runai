@@ -78,8 +78,8 @@ sam deploy --guided
 - API Gateway HTTP API: `zzk4zf48pi` (us-west-2), auth: `NONE` (HMAC signature in app layer)
 - Public URL: `https://zzk4zf48pi.execute-api.us-west-2.amazonaws.com/`
 - Lambda: `s2r-converter` (still has a Function URL on `AWS_IAM`, but unused)
-- Model: `us.anthropic.claude-sonnet-4-6` (US cross-region inference profile)
-- DynamoDB: `s2r-rate-limits` table, 100 req/IP/day
+- Model: `us.anthropic.claude-opus-4-7` (US cross-region inference profile)
+- DynamoDB: `s2r-rate-limits` table, 1000 req/IP/day
 - Prompt produces **two fenced blocks** per response: ` ```yaml ` (TrainingWorkload CRD) + ` ```bash ` (CLI v2 shell script); `parse_response()` in `cli.py` splits them automatically
 
 ## Configuration
@@ -93,7 +93,7 @@ export S2R_USE_IAM_AUTH=true   # disabled by default since v0.2.2
 # Lambda-side env vars
 SHARED_SECRET=...              # must match client's hardcoded secret
 BEDROCK_MODEL_ID=...
-MAX_REQUESTS_PER_IP_PER_DAY=100
+MAX_REQUESTS_PER_IP_PER_DAY=1000
 RATE_LIMIT_TABLE=s2r-rate-limits
 ```
 

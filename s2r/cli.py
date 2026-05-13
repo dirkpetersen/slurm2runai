@@ -341,6 +341,7 @@ def print_help() -> None:
     print("  cat script.sh | s2r               Read from stdin, print runai command to stdout", file=sys.stderr)
     print("  s2r job.slurm | bash              Convert and submit to Run:ai in one step", file=sys.stderr)
     print("  s2r --config                      Setup wizard: detect and save env to ~/.runai/runai.env", file=sys.stderr)
+    print("  s2r --prompt <input_file>         Print the assembled prompt that would be sent to the LLM (no LLM call)", file=sys.stderr)
     print("", file=sys.stderr)
     print("Note: YAML manifest output ('runai workload submit --file') is not yet implemented.", file=sys.stderr)
     print("      Run:ai 2.25 only accepts standard K8s/Kubeflow kinds (Job, PyTorchJob, etc.)", file=sys.stderr)
@@ -385,6 +386,12 @@ def _main_impl() -> None:
     if args and args[0] in ("--configure", "--config"):
         _interactive_setup()
         sys.exit(0)
+
+    # --prompt: print the assembled Bedrock prompt (no LLM call, no rate-limit charge)
+    dry_run = False
+    if args and args[0] == "--prompt":
+        dry_run = True
+        args = args[1:]
 
     # Determine input source
     input_file: Optional[str] = None
@@ -436,11 +443,11 @@ def _main_impl() -> None:
 
     # Convert
     try:
-        if show_spinner:
+        if show_spinner and not dry_run:
             spinner = Spinner("Sending to AI for conversion")
             spinner.start()
 
-        runai_config = convert_slurm_to_runai(slurm_script)
+        result = convert_slurm_to_runai(slurm_script, dry_run=dry_run)
 
         if spinner:
             spinner.stop()
@@ -450,8 +457,13 @@ def _main_impl() -> None:
         print(f"Conversion error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # --prompt: dump the assembled Bedrock prompt and exit
+    if dry_run:
+        print(result)
+        sys.exit(0)
+
     # Parse response into YAML and CLI sections
-    yaml_content, cli_command = parse_response(runai_config)
+    yaml_content, cli_command = parse_response(result)
 
     # Print the runai CLI shell script to stdout — pipe-safe to bash.
     # Note: YAML manifest output via 'runai workload submit --file' is not yet
@@ -462,7 +474,7 @@ def _main_impl() -> None:
             print(cli_command)
         else:
             # Fallback: model returned no fenced bash block — print whatever we got
-            print(runai_config)
+            print(result)
     except Exception as e:
         print(f"Error writing output: {e}", file=sys.stderr)
         sys.exit(1)

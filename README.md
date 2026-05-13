@@ -9,7 +9,7 @@ pip install s2r
 ```
 
 No AWS account or credentials required — a public hosted endpoint handles
-conversion (rate-limited to 100 requests per IP per day).
+conversion (rate-limited to 1000 requests per IP per day).
 
 ```bash
 pip install 's2r[iam-auth]'   # only needed if you self-host behind IAM auth
@@ -52,16 +52,25 @@ Run `s2r --config` at any time to update the configuration.
 ### Converting scripts
 
 ```bash
-# Convert file — saves job.yaml, prints runai CLI command to stdout
+# Convert file — prints the runai shell script to stdout
 s2r job.slurm
 
-# Convert file — saves output.yaml only
-s2r job.slurm output.yaml
+# Convert and submit in one step (the printed script is pipe-safe)
+s2r job.slurm | bash
 
-# Convert from stdin — prints runai CLI command to stdout
+# Convert from stdin
 s2r < my_slurm_script.sh
 cat job.slurm | s2r
+
+# Print the assembled prompt that would be sent to the LLM (no LLM call,
+# no rate-limit charge) — useful for debugging conversion behaviour
+s2r --prompt job.slurm
 ```
+
+> **Note:** YAML manifest output (`runai workload submit --file`) is not yet
+> implemented — Run:ai 2.25 only accepts standard Kubernetes/Kubeflow kinds
+> (Job, PyTorchJob, etc.) via that path. s2r currently emits the imperative
+> `runai training standard submit` shell command instead.
 
 ### Library usage
 
@@ -85,7 +94,7 @@ print(result)
    context into the SLURM script
 2. Signs the request with HMAC-SHA256 (no AWS credentials needed on the client)
 3. POSTs to an AWS API Gateway HTTP endpoint
-4. A Lambda behind the API calls Bedrock (Claude Sonnet 4.6) to convert the script
+4. A Lambda behind the API calls Bedrock (Claude Opus 4.7) to convert the script
 5. Returns two fenced blocks: a `TrainingWorkload` YAML manifest + a `runai` shell script
 
 ## Configuration
@@ -147,8 +156,8 @@ wizard offers to create it automatically using your AWS credentials from
 | Resource | Value |
 |---|---|
 | Endpoint | AWS API Gateway HTTP API (`zzk4zf48pi`, us-west-2) |
-| Model | Claude Sonnet 4.6 (`us.anthropic.claude-sonnet-4-6`) |
-| Rate limit | 100 requests / IP / day |
+| Model | Claude Opus 4.7 (`us.anthropic.claude-opus-4-7`) |
+| Rate limit | 1000 requests / IP / day |
 | Auth | HMAC-SHA256 (no AWS credentials required) |
 
 ## Self-hosting

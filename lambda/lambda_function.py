@@ -25,7 +25,7 @@ from botocore.exceptions import ClientError
 
 # Configuration
 SHARED_SECRET = os.environ.get("SHARED_SECRET", "s2r-shared-secret-change-this-in-production")
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-opus-4-7")
 MAX_REQUESTS_PER_IP_PER_DAY = int(os.environ.get("MAX_REQUESTS_PER_IP_PER_DAY", "100"))
 MAX_PAYLOAD_SIZE = 50 * 1024  # 50KB max
 
@@ -85,9 +85,9 @@ def check_rate_limit(ip_address: str) -> bool:
         raise
 
 
-def call_bedrock(slurm_script: str) -> str:
-    """Call AWS Bedrock to convert SLURM script to Run.ai config."""
-    prompt = f"""You are an expert in HPC job scheduling and NVIDIA Run:ai.
+def build_prompt(slurm_script: str) -> str:
+    """Return the full prompt that will be sent to Bedrock for the given script."""
+    return f"""You are an expert in HPC job scheduling and NVIDIA Run:ai.
 Convert the following SLURM batch script to NVIDIA Run:ai format.
 
 SLURM Script:
@@ -158,11 +158,10 @@ JOB_PREFIX=<job-name>
 # ---------------------------------------------------------------
 # Before submitting, upload your code/data to the S3 bucket so the
 # container can find it under the bucket mount. The bucket mirrors
-# your laptop's absolute paths 1:1 — the same path structure under
-# /home/... appears under <RUNAI_BUCKET_MOUNT>/home/... inside the
-# container. Run this from your laptop:
+# your laptop's absolute paths 1:1. Run this single-line command
+# from your laptop (copy/paste the next line):
 #
-#   aws s3 sync <ABS-LOCAL-DIR> s3://<RUNAI_BUCKET_NAME><ABS-LOCAL-DIR> [--profile <RUNAI_AWS_PROFILE>]
+# aws s3 sync <ABS-LOCAL-DIR> s3://<RUNAI_BUCKET_NAME><ABS-LOCAL-DIR> [--profile <RUNAI_AWS_PROFILE>]
 #
 # Where <ABS-LOCAL-DIR> is the absolute SLURM --chdir directory.
 # (--profile is included only if RUNAI_AWS_PROFILE is in the s2r context.)
@@ -200,12 +199,17 @@ if [[ -n "$JOB_NAME" ]]; then
   echo "To track the workload's status, run:"
   echo
   echo "runai training standard describe $JOB_NAME -p $PROJECT"
+  echo
+  echo "To track the workload's output, run:"
+  echo
+  echo "runai training logs $JOB_NAME --follow -p $PROJECT"
 fi
 ```
 
-CRITICAL: Emit the trailing block EXACTLY as shown above — do NOT add extra commands
-(no logs/list/delete hints), do NOT change "To track the workload's status, run:" wording,
-and do NOT add a "Monitor your job with:" header. Only the single 'describe' line.
+CRITICAL: Emit the trailing block EXACTLY as shown above — do NOT change wording,
+do NOT add a "Monitor your job with:" header, do NOT add list/delete hints.
+Two echo commands ONLY: one 'describe' line and one 'logs ... --follow' line, each
+on its own line so the user can copy/paste either one. Both must include `-p $PROJECT`.
 
 SLURM → Run:ai mapping rules:
 - --job-name          → metadata.name (YAML) and --name-prefix (CLI). Use --name-prefix
@@ -262,6 +266,11 @@ Upload-hint rule (when generating the comment block before the runai command):
 - The upload comment must remain a COMMENT (each line starts with #). Never run
   aws s3 inside the generated bash — the user copies and runs it themselves.
 - If RUNAI_BUCKET is NOT in the context (no S3 mount), omit the upload comment block.
+- CRITICAL — the aws s3 sync command MUST be on a SINGLE physical line. Do NOT use
+  backslash continuations, do NOT split arguments across multiple commented lines.
+  The user copies the line directly into a shell, and `\` followed by `# next-line`
+  breaks the paste. Allow the line to be long; readability is less important than
+  copy/paste safety.
 
 Path remapping rule (CRITICAL):
 - For EVERY absolute path in the SLURM script, prepend RUNAI_BUCKET_MOUNT.
@@ -314,32 +323,29 @@ Container/dependency rule (IMPORTANT — avoid bash setup boilerplate when possi
 Replace all <PLACEHOLDER> values with real values derived from the SLURM script.
 Output ONLY the two fenced code blocks."""
 
-    # Prepare request for Claude on Bedrock
+
+def call_bedrock(slurm_script: str) -> str:
+    """Call AWS Bedrock to convert SLURM script to Run.ai config."""
+    prompt = build_prompt(slurm_script)
+
     request_body = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": 4096,
         "messages": [
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+            {"role": "user", "content": prompt},
+        ],
     }
 
     try:
         response = bedrock.invoke_model(
             modelId=BEDROCK_MODEL_ID,
-            body=json.dumps(request_body)
+            body=json.dumps(request_body),
         )
-
         response_body = json.loads(response["body"].read())
         content = response_body.get("content", [])
-
         if content and len(content) > 0:
             return content[0].get("text", "")
-
         return "Error: No content in response"
-
     except ClientError as e:
         raise Exception(f"Bedrock API error: {e}")
 
@@ -386,6 +392,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "body": json.dumps({
                     "error": f"Rate limit exceeded: {MAX_REQUESTS_PER_IP_PER_DAY} requests per day"
                 })
+            }
+
+        # Dry-run: return the assembled prompt without calling Bedrock.
+        # No rate-limit charge for inspection.
+        qs = event.get("queryStringParameters") or {}
+        if str(qs.get("dry_run", "")).lower() in ("1", "true", "yes"):
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({
+                    "prompt": build_prompt(body),
+                    "model": BEDROCK_MODEL_ID,
+                }),
             }
 
         # Call Bedrock
